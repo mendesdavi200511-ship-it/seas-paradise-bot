@@ -1,6 +1,7 @@
 import random
-import asyncio
 import discord
+
+from database.database import salvar_rolagem_criacao
 
 
 # =========================================================
@@ -188,7 +189,7 @@ def aplicar_beneficios_familia(dados):
 # SORTEAR TALENTOS
 # =========================================================
 
-def sortear_talentos(dados):
+async def sortear_talentos(user_id, dados):
 
     aplicar_beneficios_familia(dados)
 
@@ -209,6 +210,18 @@ def sortear_talentos(dados):
         )
 
         dados["prodigio_sorteado"] = True
+
+    await salvar_rolagem_criacao(
+        user_id,
+        raca=dados.get("raca"),
+        familia=dados.get("familia"),
+        haoshoku=dados["haoshoku"],
+        prodigio=dados["prodigio"],
+        raca_sorteada=dados["raca_sorteada"],
+        familia_sorteada=dados["familia_sorteada"],
+        haoshoku_sorteado=True,
+        prodigio_sorteado=True
+    )
 
 
 # =========================================================
@@ -342,89 +355,6 @@ def criar_embed(usuario):
 
 
 # =========================================================
-# INATIVIDADE DA CRIAÇÃO
-# =========================================================
-
-TEMPO_INATIVIDADE = 20
-
-_tarefas_inatividade = {}
-_mensagens_criacao = {}
-
-
-def renovar_inatividade(user_id, mensagem=None):
-
-    if mensagem is not None:
-        _mensagens_criacao[user_id] = mensagem
-
-    tarefa = _tarefas_inatividade.get(user_id)
-
-    if tarefa and not tarefa.done():
-        tarefa.cancel()
-
-    async def aguardar():
-
-        try:
-
-            await asyncio.sleep(
-                TEMPO_INATIVIDADE
-            )
-
-            criando.pop(
-                user_id,
-                None
-            )
-
-            mensagem_atual = (
-                _mensagens_criacao.pop(
-                    user_id,
-                    None
-                )
-            )
-
-            _tarefas_inatividade.pop(
-                user_id,
-                None
-            )
-
-            if mensagem_atual:
-
-                try:
-                    await mensagem_atual.delete()
-
-                except (
-                    discord.NotFound,
-                    discord.Forbidden,
-                    discord.HTTPException
-                ):
-                    pass
-
-        except asyncio.CancelledError:
-            pass
-
-    _tarefas_inatividade[user_id] = (
-        asyncio.create_task(
-            aguardar()
-        )
-    )
-
-
-def encerrar_inatividade(user_id):
-
-    tarefa = _tarefas_inatividade.pop(
-        user_id,
-        None
-    )
-
-    if tarefa and not tarefa.done():
-        tarefa.cancel()
-
-    _mensagens_criacao.pop(
-        user_id,
-        None
-    )
-
-
-# =========================================================
 # VIEW BASE
 # =========================================================
 
@@ -439,7 +369,7 @@ class ViewDoJogador(
     ):
 
         super().__init__(
-            timeout=None
+            timeout=300
         )
 
         self.dono_id = dono_id
@@ -467,11 +397,6 @@ class ViewDoJogador(
 
         obter_rascunho(
             self.dono_id
-        )
-
-        renovar_inatividade(
-            self.dono_id,
-            interaction.message
         )
 
         return True
@@ -515,11 +440,6 @@ class NomeModal(
 
         dados["nome"] = (
             self.nome.value.strip()
-        )
-
-        renovar_inatividade(
-            interaction.user.id,
-            interaction.message
         )
 
         await interaction.response.edit_message(
@@ -601,11 +521,6 @@ class IdadeModal(
 
         dados["idade"] = idade
 
-        renovar_inatividade(
-            interaction.user.id,
-            interaction.message
-        )
-
         await interaction.response.edit_message(
             embed=criar_embed(
                 interaction.user
@@ -661,11 +576,6 @@ class ImagemModal(
             url
             if url
             else None
-        )
-
-        renovar_inatividade(
-            interaction.user.id,
-            interaction.message
         )
 
         await interaction.response.edit_message(
@@ -1037,6 +947,12 @@ class CriacaoView(
 
         dados["raca_sorteada"] = True
 
+        await salvar_rolagem_criacao(
+            interaction.user.id,
+            raca=dados["raca"],
+            raca_sorteada=True
+        )
+
         await interaction.response.edit_message(
             embed=criar_embed(
                 interaction.user
@@ -1087,6 +1003,16 @@ class CriacaoView(
 
         aplicar_beneficios_familia(
             dados
+        )
+
+        await salvar_rolagem_criacao(
+            interaction.user.id,
+            familia=dados["familia"],
+            haoshoku=dados["haoshoku"] if dados["haoshoku_sorteado"] else None,
+            prodigio=dados["prodigio"] if dados["prodigio_sorteado"] else None,
+            familia_sorteada=True,
+            haoshoku_sorteado=dados["haoshoku_sorteado"],
+            prodigio_sorteado=dados["prodigio_sorteado"]
         )
 
         await interaction.response.edit_message(
@@ -1229,7 +1155,8 @@ class CriacaoView(
 
             return
 
-        sortear_talentos(
+        await sortear_talentos(
+            interaction.user.id,
             dados
         )
 
@@ -1243,10 +1170,6 @@ class CriacaoView(
 
             return
 
-        encerrar_inatividade(
-            interaction.user.id
-        )
-
         await self.confirmar_callback(
             interaction
-        )
+                               )
