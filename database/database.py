@@ -266,6 +266,26 @@ async def criar_tabelas():
         """)
 
         # =================================================
+        # ROLAGENS DA CRIAÇÃO
+        # Impede reroll ao fechar/reabrir o painel ou reiniciar o bot.
+        # =================================================
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS rolagens_criacao (
+                user_id BIGINT PRIMARY KEY,
+                raca TEXT,
+                familia TEXT,
+                haoshoku BOOLEAN,
+                prodigio BOOLEAN,
+                raca_sorteada BOOLEAN NOT NULL DEFAULT FALSE,
+                familia_sorteada BOOLEAN NOT NULL DEFAULT FALSE,
+                haoshoku_sorteado BOOLEAN NOT NULL DEFAULT FALSE,
+                prodigio_sorteado BOOLEAN NOT NULL DEFAULT FALSE,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        # =================================================
         # ESPECIALIZAÇÕES / DOMÍNIOS
         # =================================================
 
@@ -322,6 +342,65 @@ async def criar_tabelas():
             ON CONFLICT (user_id)
             DO NOTHING;
         """)
+
+
+# =========================================================
+# ROLAGENS PERSISTENTES DA CRIAÇÃO
+# =========================================================
+
+async def buscar_rolagem_criacao(user_id):
+    db = get_pool()
+    return await db.fetchrow(
+        """
+        SELECT * FROM rolagens_criacao
+        WHERE user_id = $1;
+        """,
+        user_id
+    )
+
+
+async def salvar_rolagem_criacao(
+    user_id,
+    raca=None,
+    familia=None,
+    haoshoku=None,
+    prodigio=None,
+    raca_sorteada=False,
+    familia_sorteada=False,
+    haoshoku_sorteado=False,
+    prodigio_sorteado=False
+):
+    db = get_pool()
+    await db.execute(
+        """
+        INSERT INTO rolagens_criacao (
+            user_id, raca, familia, haoshoku, prodigio,
+            raca_sorteada, familia_sorteada,
+            haoshoku_sorteado, prodigio_sorteado
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        ON CONFLICT (user_id) DO UPDATE SET
+            raca = COALESCE(EXCLUDED.raca, rolagens_criacao.raca),
+            familia = COALESCE(EXCLUDED.familia, rolagens_criacao.familia),
+            haoshoku = COALESCE(EXCLUDED.haoshoku, rolagens_criacao.haoshoku),
+            prodigio = COALESCE(EXCLUDED.prodigio, rolagens_criacao.prodigio),
+            raca_sorteada = rolagens_criacao.raca_sorteada OR EXCLUDED.raca_sorteada,
+            familia_sorteada = rolagens_criacao.familia_sorteada OR EXCLUDED.familia_sorteada,
+            haoshoku_sorteado = rolagens_criacao.haoshoku_sorteado OR EXCLUDED.haoshoku_sorteado,
+            prodigio_sorteado = rolagens_criacao.prodigio_sorteado OR EXCLUDED.prodigio_sorteado,
+            atualizado_em = CURRENT_TIMESTAMP;
+        """,
+        user_id, raca, familia, haoshoku, prodigio,
+        raca_sorteada, familia_sorteada,
+        haoshoku_sorteado, prodigio_sorteado
+    )
+
+
+async def resetar_rolagem_criacao(user_id):
+    db = get_pool()
+    return await db.execute(
+        "DELETE FROM rolagens_criacao WHERE user_id = $1;",
+        user_id
+    )
 
 
 # =========================================================
@@ -1112,4 +1191,4 @@ async def adicionar_reputacao(
         """,
         quantidade,
         user_id
-    )
+                )
