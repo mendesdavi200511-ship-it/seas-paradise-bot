@@ -15,6 +15,49 @@ VALORES_DISTRIBUICAO = [
 
 
 # =========================================================
+# ESCALA DE ATRIBUTOS
+# =========================================================
+
+ESCALA_ATRIBUTOS = [
+    (50000, "Lendário"),
+    (25000, "Titânico"),
+    (10000, "Sobre-Humano"),
+    (5000, "Monstruoso"),
+    (2000, "Excepcional"),
+    (1000, "Muito Forte"),
+    (600, "Forte"),
+    (350, "Bom"),
+    (200, "Mediano"),
+    (100, "Normal"),
+    (50, "Fraco"),
+    (20, "Muito Fraco"),
+]
+
+
+def formatar_numero(valor):
+
+    return f"{valor:,}".replace(",", ".")
+
+
+def nivel_atributo(valor):
+
+    for minimo, nome in ESCALA_ATRIBUTOS:
+
+        if valor >= minimo:
+            return nome
+
+    return "Muito Fraco"
+
+
+def formatar_atributo(valor):
+
+    return (
+        f"**{formatar_numero(valor)}**\n"
+        f"{nivel_atributo(valor)}"
+    )
+
+
+# =========================================================
 # EMBED
 # =========================================================
 
@@ -31,30 +74,40 @@ def embed_atributos(dados):
 
     embed.add_field(
         name="💪 Força",
-        value=f"**{dados['forca']:,}**",
+        value=formatar_atributo(
+            dados["forca"]
+        ),
         inline=True
     )
 
     embed.add_field(
         name="🛡️ Resistência",
-        value=f"**{dados['resistencia']:,}**",
+        value=formatar_atributo(
+            dados["resistencia"]
+        ),
         inline=True
     )
 
     embed.add_field(
         name="💨 Velocidade/Agilidade",
-        value=f"**{dados['velocidade']:,}**",
+        value=formatar_atributo(
+            dados["velocidade"]
+        ),
         inline=True
     )
 
     embed.add_field(
         name="✨ Pontos disponíveis",
-        value=f"**{dados['pontos']:,}**",
+        value=(
+            f"**{formatar_numero(dados['pontos'])}**"
+        ),
         inline=False
     )
 
     embed.set_footer(
-        text="Limite máximo por atributo: 50.000"
+        text=(
+            "Limite máximo por atributo: 50.000"
+        )
     )
 
     return embed
@@ -64,9 +117,13 @@ def embed_atributos(dados):
 # SELECIONAR ATRIBUTO
 # =========================================================
 
-class AtributoSelect(discord.ui.Select):
+class AtributoSelect(
+    discord.ui.Select
+):
 
-    def __init__(self):
+    def __init__(
+        self
+    ):
 
         opcoes = [
             discord.SelectOption(
@@ -94,14 +151,21 @@ class AtributoSelect(discord.ui.Select):
             row=0
         )
 
-    async def callback(self, interaction):
+    async def callback(
+        self,
+        interaction
+    ):
 
         view = self.view
 
-        view.atributo_selecionado = self.values[0]
+        view.atributo_selecionado = (
+            self.values[0]
+        )
 
         await interaction.response.edit_message(
-            embed=embed_atributos(view.dados),
+            embed=embed_atributos(
+                view.dados
+            ),
             view=view
         )
 
@@ -110,9 +174,16 @@ class AtributoSelect(discord.ui.Select):
 # BOTÃO DE QUANTIDADE
 # =========================================================
 
-class BotaoQuantidade(discord.ui.Button):
+class BotaoQuantidade(
+    discord.ui.Button
+):
 
-    def __init__(self, texto, quantidade, row=1):
+    def __init__(
+        self,
+        texto,
+        quantidade,
+        row=1
+    ):
 
         super().__init__(
             label=texto,
@@ -122,47 +193,66 @@ class BotaoQuantidade(discord.ui.Button):
 
         self.quantidade = quantidade
 
-    async def callback(self, interaction):
+    async def callback(
+        self,
+        interaction
+    ):
 
         view = self.view
 
-        atributo = view.atributo_selecionado
+        atributo = (
+            view.atributo_selecionado
+        )
 
         if atributo is None:
+
             await interaction.response.send_message(
                 "❌ Primeiro escolha **Força, Resistência "
                 "ou Velocidade/Agilidade**.",
                 ephemeral=True
             )
+
             return
 
         dados = view.dados
 
         if dados["pontos"] < self.quantidade:
+
             await interaction.response.send_message(
                 "❌ Você não possui pontos suficientes.",
                 ephemeral=True
             )
+
             return
 
         if (
-            dados[atributo] + self.quantidade
+            dados[atributo]
+            + self.quantidade
             > ATRIBUTO_MAXIMO
         ):
+
             await interaction.response.send_message(
                 "❌ Esse atributo não pode ultrapassar "
                 "**50.000 pontos**.",
                 ephemeral=True
             )
+
             return
 
-        dados[atributo] += self.quantidade
-        dados["pontos"] -= self.quantidade
+        dados[
+            atributo
+        ] += self.quantidade
+
+        dados[
+            "pontos"
+        ] -= self.quantidade
 
         await view.salvar()
 
         await interaction.response.edit_message(
-            embed=embed_atributos(dados),
+            embed=embed_atributos(
+                dados
+            ),
             view=view
         )
 
@@ -171,9 +261,13 @@ class BotaoQuantidade(discord.ui.Button):
 # RESETAR DISTRIBUIÇÃO
 # =========================================================
 
-class ResetarButton(discord.ui.Button):
+class ResetarButton(
+    discord.ui.Button
+):
 
-    def __init__(self):
+    def __init__(
+        self
+    ):
 
         super().__init__(
             label="Resetar distribuição",
@@ -182,22 +276,36 @@ class ResetarButton(discord.ui.Button):
             row=2
         )
 
-    async def callback(self, interaction):
+    async def callback(
+        self,
+        interaction
+    ):
 
         view = self.view
         dados = view.dados
 
-        # Devolve somente os pontos distribuídos
-        # durante esta sessão.
-        dados["forca"] = view.inicial["forca"]
-        dados["resistencia"] = view.inicial["resistencia"]
-        dados["velocidade"] = view.inicial["velocidade"]
-        dados["pontos"] = view.inicial["pontos"]
+        dados["forca"] = (
+            view.inicial["forca"]
+        )
+
+        dados["resistencia"] = (
+            view.inicial["resistencia"]
+        )
+
+        dados["velocidade"] = (
+            view.inicial["velocidade"]
+        )
+
+        dados["pontos"] = (
+            view.inicial["pontos"]
+        )
 
         await view.salvar()
 
         await interaction.response.edit_message(
-            embed=embed_atributos(dados),
+            embed=embed_atributos(
+                dados
+            ),
             view=view
         )
 
@@ -206,7 +314,9 @@ class ResetarButton(discord.ui.Button):
 # VIEW PRINCIPAL
 # =========================================================
 
-class AtributosView(discord.ui.View):
+class AtributosView(
+    discord.ui.View
+):
 
     def __init__(
         self,
@@ -215,7 +325,9 @@ class AtributosView(discord.ui.View):
         voltar_callback=None
     ):
 
-        super().__init__(timeout=300)
+        super().__init__(
+            timeout=300
+        )
 
         self.dono_id = dono_id
 
@@ -226,17 +338,20 @@ class AtributosView(discord.ui.View):
             "pontos": dados["pontos"]
         }
 
-        self.inicial = self.dados.copy()
+        self.inicial = (
+            self.dados.copy()
+        )
 
         self.atributo_selecionado = None
 
-        self.voltar_callback = voltar_callback
+        self.voltar_callback = (
+            voltar_callback
+        )
 
         self.add_item(
             AtributoSelect()
         )
 
-        # +1 +5 +50 +100 +300
         for texto, quantidade in VALORES_DISTRIBUICAO:
 
             self.add_item(
@@ -259,7 +374,8 @@ class AtributosView(discord.ui.View):
         if interaction.user.id != self.dono_id:
 
             await interaction.response.send_message(
-                "❌ Esse painel pertence a outro jogador.",
+                "❌ Esse painel pertence "
+                "a outro jogador.",
                 ephemeral=True
             )
 
@@ -267,7 +383,9 @@ class AtributosView(discord.ui.View):
 
         return True
 
-    async def salvar(self):
+    async def salvar(
+        self
+    ):
 
         await atualizar_atributos(
             self.dono_id,
@@ -300,4 +418,4 @@ class AtributosView(discord.ui.View):
         await interaction.response.send_message(
             "✅ Distribuição salva.",
             ephemeral=True
-      )
+            )
