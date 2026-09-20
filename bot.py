@@ -133,56 +133,6 @@ bot = SeasParadiseBot()
 
 
 # =========================================================
-# COMANDOS BÁSICOS
-# =========================================================
-
-@bot.command(name="ping")
-async def ping(ctx):
-
-    latencia = round(
-        bot.latency * 1000
-    )
-
-    await ctx.send(
-        f"🏓 Pong! `{latencia}ms`"
-    )
-
-
-@bot.command(name="ajuda")
-async def ajuda(ctx):
-
-    embed = discord.Embed(
-        title="🏴‍☠️ Sea's Paradise",
-        description=(
-            "Central de ajuda do Sea's Paradise."
-        ),
-        color=discord.Color.blue()
-    )
-
-    embed.add_field(
-        name="🏓 !ping",
-        value=(
-            "Verifica se o bot está "
-            "respondendo."
-        ),
-        inline=False
-    )
-
-    embed.add_field(
-        name="📜 !ajuda",
-        value=(
-            "Mostra esta mensagem "
-            "de ajuda."
-        ),
-        inline=False
-    )
-
-    await ctx.send(
-        embed=embed
-    )
-
-
-# =========================================================
 # BOT ONLINE
 # =========================================================
 
@@ -214,6 +164,214 @@ async def on_ready():
 
     print("=" * 50)
     print()
+
+
+# =========================================================
+# COMANDO — PING
+# =========================================================
+
+@bot.command(
+    name="ping"
+)
+async def ping(ctx):
+
+    latencia = round(
+        bot.latency * 1000
+    )
+
+    await ctx.send(
+        f"🏓 Pong! **{latencia}ms**"
+    )
+
+
+# =========================================================
+# COMANDO — AJUDA
+# =========================================================
+
+@bot.command(
+    name="ajuda",
+    aliases=["help", "comandos"]
+)
+async def ajuda(ctx):
+
+    embed = discord.Embed(
+        title="🏴‍☠️ SEA'S PARADISE — COMANDOS",
+        description=(
+            "Aqui estão os comandos atualmente "
+            "disponíveis no bot.\n\n"
+            "Use **!** antes de cada comando."
+        ),
+        color=discord.Color.blue()
+    )
+
+    # =====================================================
+    # ORGANIZAR COMANDOS POR CATEGORIA
+    # =====================================================
+
+    categorias = {}
+
+    for comando in bot.commands:
+
+        # Comandos ocultos não aparecem
+        if comando.hidden:
+            continue
+
+        # Descobre de qual Cog o comando veio
+        categoria = (
+            comando.cog_name
+            if comando.cog_name
+            else "Geral"
+        )
+
+        if categoria not in categorias:
+
+            categorias[categoria] = []
+
+        # =================================================
+        # ASSINATURA DO COMANDO
+        # =================================================
+
+        assinatura = comando.signature
+
+        if assinatura:
+
+            texto = (
+                f"`!{comando.name} "
+                f"{assinatura}`"
+            )
+
+        else:
+
+            texto = (
+                f"`!{comando.name}`"
+            )
+
+        # =================================================
+        # ALIASES
+        # =================================================
+
+        if comando.aliases:
+
+            aliases = ", ".join(
+                f"!{alias}"
+                for alias in comando.aliases
+            )
+
+            texto += (
+                f"\n↳ Também: `{aliases}`"
+            )
+
+        categorias[
+            categoria
+        ].append(
+            texto
+        )
+
+    # =====================================================
+    # NOMES DAS CATEGORIAS
+    # =====================================================
+
+    nomes_categorias = {
+
+        "Geral":
+            "⚙️ Geral",
+
+        "Personagem":
+            "🏴‍☠️ Personagem",
+
+        "Admin":
+            "👑 Administração"
+
+    }
+
+    # =====================================================
+    # ORDEM DAS CATEGORIAS
+    # =====================================================
+
+    ordem = [
+        "Geral",
+        "Personagem",
+        "Admin"
+    ]
+
+    categorias_ordenadas = []
+
+    # Primeiro categorias conhecidas
+    for categoria in ordem:
+
+        if categoria in categorias:
+
+            categorias_ordenadas.append(
+                categoria
+            )
+
+    # Depois qualquer Cog novo
+    for categoria in categorias:
+
+        if categoria not in categorias_ordenadas:
+
+            categorias_ordenadas.append(
+                categoria
+            )
+
+    # =====================================================
+    # ADICIONAR CATEGORIAS AO EMBED
+    # =====================================================
+
+    for categoria in categorias_ordenadas:
+
+        comandos_lista = categorias[
+            categoria
+        ]
+
+        titulo = nomes_categorias.get(
+            categoria,
+            f"📚 {categoria}"
+        )
+
+        texto = "\n".join(
+            comandos_lista
+        )
+
+        # Discord limita cada field a 1024 caracteres
+        if len(texto) > 1024:
+
+            texto = (
+                texto[:1000]
+                + "\n..."
+            )
+
+        embed.add_field(
+            name=titulo,
+            value=(
+                texto
+                if texto
+                else "Nenhum comando."
+            ),
+            inline=False
+        )
+
+    # =====================================================
+    # TOTAL
+    # =====================================================
+
+    comandos_visiveis = [
+        comando
+        for comando in bot.commands
+        if not comando.hidden
+    ]
+
+    embed.set_footer(
+        text=(
+            "Sea's Paradise • "
+            f"{len(comandos_visiveis)} "
+            "comandos carregados"
+        )
+    )
+
+    await ctx.send(
+        embed=embed
+    )
 
 
 # =========================================================
@@ -301,7 +459,7 @@ async def on_command_error(
         return
 
     # =====================================================
-    # ERRO INTERNO DO COMANDO
+    # ERRO INTERNO
     # =====================================================
 
     erro_original = getattr(
