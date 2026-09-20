@@ -9,6 +9,7 @@ from database.database import (
     buscar_especializacoes,
     buscar_pontos_percentuais,
     distribuir_percentual,
+    adicionar_especializacao,
 )
 
 from views.criacao import (
@@ -28,11 +29,20 @@ from views.dominios import (
     criar_embed_dominios,
 )
 
+from data.profissoes import PROFISSOES
+
 
 # =========================================================
 # SEA'S PARADISE
 # COG — PERSONAGEM
 # =========================================================
+
+
+# =========================================================
+# CONFIGURAÇÕES
+# =========================================================
+
+TIMEOUT_PAINEL = 20
 
 
 # =========================================================
@@ -78,6 +88,133 @@ def formatar_atributo(valor):
     )
 
 
+def valor_seguro(
+    registro,
+    chave,
+    padrao=None
+):
+
+    """
+    Busca uma coluna de asyncpg.Record sem quebrar
+    caso uma ficha antiga ainda não possua algum valor.
+    """
+
+    try:
+
+        valor = registro[chave]
+
+        if valor is None:
+            return padrao
+
+        return valor
+
+    except (KeyError, TypeError):
+
+        return padrao
+
+
+def formatar_sim_nao(valor):
+
+    if isinstance(valor, bool):
+
+        return (
+            "Sim"
+            if valor
+            else "Não"
+        )
+
+    if valor is None:
+        return "Não"
+
+    texto = str(valor).strip().lower()
+
+    if texto in {
+        "sim",
+        "true",
+        "1",
+        "yes"
+    }:
+        return "Sim"
+
+    return "Não"
+
+
+def emoji_sim_nao(valor):
+
+    return (
+        "✅"
+        if formatar_sim_nao(valor) == "Sim"
+        else "❌"
+    )
+
+
+def limite_profissao(nome):
+
+    dados = PROFISSOES.get(
+        nome
+    )
+
+    if not dados:
+        return 200
+
+    return dados.get(
+        "maximo",
+        200
+    )
+
+
+# =========================================================
+# ORGANIZAR DOMÍNIOS
+# =========================================================
+
+def separar_dominios(
+    especializacoes
+):
+
+    principais = {
+        "profissao": [],
+        "classe": [],
+        "estilo": [],
+    }
+
+    extras = {}
+
+    for item in especializacoes:
+
+        categoria = (
+            item["categoria"]
+            .strip()
+            .lower()
+        )
+
+        if categoria in principais:
+
+            principais[
+                categoria
+            ].append(item)
+
+        else:
+
+            extras.setdefault(
+                categoria,
+                []
+            ).append(item)
+
+    return principais, extras
+
+
+def linha_dominio(
+    item,
+    emoji
+):
+
+    return (
+        f"{emoji} **{item['nome']}** — "
+        f"{item['porcentagem']}%"
+        f"/{item['limite']}%"
+    )
+
+
 # =========================================================
 # EMBED DA FICHA
 # =========================================================
@@ -87,7 +224,7 @@ async def criar_embed_ficha(
     personagem
 ):
 
-    especializacoes = (
+    especializacoes = list(
         await buscar_especializacoes(
             membro.id
         )
@@ -96,6 +233,36 @@ async def criar_embed_ficha(
     pontos_percentuais = (
         await buscar_pontos_percentuais(
             membro.id
+        )
+    )
+
+    idade = valor_seguro(
+        personagem,
+        "idade",
+        "Não definida"
+    )
+
+    imagem = valor_seguro(
+        personagem,
+        "imagem",
+        None
+    )
+
+    haoshoku = valor_seguro(
+        personagem,
+        "haoshoku",
+        False
+    )
+
+    prodigio = valor_seguro(
+        personagem,
+        "prodigio",
+        False
+    )
+
+    principais, extras = (
+        separar_dominios(
+            especializacoes
         )
     )
 
@@ -110,36 +277,163 @@ async def criar_embed_ficha(
         )
     )
 
-    embed.set_thumbnail(
-        url=membro.display_avatar.url
-    )
+    # =====================================================
+    # IMAGEM
+    # =====================================================
+
+    if imagem:
+
+        embed.set_thumbnail(
+            url=imagem
+        )
+
+    else:
+
+        embed.set_thumbnail(
+            url=membro.display_avatar.url
+        )
+
+    # =====================================================
+    # IDENTIDADE
+    # =====================================================
 
     embed.add_field(
         name="👤 Identidade",
         value=(
-            f"**Raça:** "
+            f"🎂 **Idade:** "
+            f"{idade}\n"
+
+            f"🧬 **Raça:** "
             f"{personagem['raca']}\n"
 
-            f"**Família:** "
+            f"🩸 **Família:** "
             f"{personagem['familia']}\n"
 
-            f"**Facção:** "
+            f"🌊 **Facção:** "
             f"{personagem['faccao']}"
         ),
         inline=False
     )
 
-    embed.add_field(
-        name="🧭 Caminho",
-        value=(
-            f"**Profissão:** "
-            f"{personagem['profissao']}\n"
+    # =====================================================
+    # CAMINHO
+    #
+    # Classe, profissão e estilo são DOMÍNIOS.
+    # Por isso aparecem aqui já com suas porcentagens
+    # e NÃO são repetidos posteriormente.
+    # =====================================================
 
-            f"**Classe:** "
-            f"{personagem['classe']}"
+    linhas_caminho = []
+
+    for item in principais[
+        "profissao"
+    ]:
+
+        linhas_caminho.append(
+            linha_dominio(
+                item,
+                "🛠️"
+            )
+        )
+
+    for item in principais[
+        "classe"
+    ]:
+
+        linhas_caminho.append(
+            linha_dominio(
+                item,
+                "⚔️"
+            )
+        )
+
+    for item in principais[
+        "estilo"
+    ]:
+
+        linhas_caminho.append(
+            linha_dominio(
+                item,
+                "🥋"
+            )
+        )
+
+    if not linhas_caminho:
+
+        # Compatibilidade caso exista uma ficha antiga
+        # ainda sem especializações registradas.
+
+        profissao = valor_seguro(
+            personagem,
+            "profissao",
+            "Nenhuma"
+        )
+
+        classe = valor_seguro(
+            personagem,
+            "classe",
+            "Nenhuma"
+        )
+
+        estilo = valor_seguro(
+            personagem,
+            "estilo",
+            "Nenhum"
+        )
+
+        if profissao != "Nenhuma":
+
+            linhas_caminho.append(
+                f"🛠️ **{profissao}**"
+            )
+
+        if classe != "Nenhuma":
+
+            linhas_caminho.append(
+                f"⚔️ **{classe}**"
+            )
+
+        if estilo not in {
+            "Nenhum",
+            "Nenhuma",
+            None
+        }:
+
+            linhas_caminho.append(
+                f"🥋 **{estilo}**"
+            )
+
+    if linhas_caminho:
+
+        embed.add_field(
+            name="🧭 Caminho",
+            value="\n".join(
+                linhas_caminho
+            ),
+            inline=False
+        )
+
+    # =====================================================
+    # TALENTOS ESPECIAIS
+    # =====================================================
+
+    embed.add_field(
+        name="🌟 Talentos Especiais",
+        value=(
+            f"{emoji_sim_nao(haoshoku)} "
+            f"**Haoshoku:** "
+            f"{formatar_sim_nao(haoshoku)}\n"
+
+            f"{emoji_sim_nao(prodigio)} "
+            f"**Prodígio:** "
+            f"{formatar_sim_nao(prodigio)}"
         ),
         inline=False
     )
+
+    # =====================================================
+    # ATRIBUTOS
+    # =====================================================
 
     embed.add_field(
         name="⚔️ Atributos",
@@ -159,84 +453,78 @@ async def criar_embed_ficha(
         inline=False
     )
 
-    if especializacoes:
+    # =====================================================
+    # OUTROS DOMÍNIOS
+    #
+    # Profissão, classe e estilo NÃO entram aqui.
+    # Isso elimina a duplicação da ficha.
+    # =====================================================
 
-        categorias = {}
+    emojis_categoria = {
+        "haki": "👁️",
+        "akuma": "🍈",
+        "akuma no mi": "🍈",
+        "tecnica": "💥",
+        "especializacao": "✨",
+        "despertar": "🌟",
+    }
 
-        for item in especializacoes:
+    nomes_categoria = {
+        "haki": "Haki",
+        "akuma": "Akuma no Mi",
+        "akuma no mi": "Akuma no Mi",
+        "tecnica": "Técnicas",
+        "especializacao": "Especializações",
+        "despertar": "Despertar",
+    }
 
-            categoria = (
-                item["categoria"]
-                .strip()
-                .lower()
+    for categoria, itens in extras.items():
+
+        linhas = []
+
+        for item in itens:
+
+            linhas.append(
+                f"**{item['nome']}** — "
+                f"{item['porcentagem']}%"
+                f"/{item['limite']}%"
             )
 
-            categorias.setdefault(
+        texto = "\n".join(
+            linhas
+        )
+
+        if len(texto) > 1024:
+
+            texto = (
+                texto[:1000]
+                + "\n..."
+            )
+
+        emoji = emojis_categoria.get(
+            categoria,
+            "📚"
+        )
+
+        nome_categoria = (
+            nomes_categoria.get(
                 categoria,
-                []
-            ).append(
-                item
+                categoria.title()
             )
-
-        emojis_categoria = {
-            "estilo": "🥋",
-            "classe": "⚔️",
-            "profissao": "🛠️",
-            "haki": "👁️",
-            "akuma": "🍈",
-            "akuma no mi": "🍈",
-            "tecnica": "💥",
-            "especializacao": "✨",
-            "despertar": "🌟",
-        }
-
-        for categoria, itens in categorias.items():
-
-            linhas = []
-
-            for item in itens:
-
-                linhas.append(
-                    f"**{item['nome']}** — "
-                    f"{item['porcentagem']}%"
-                    f"/{item['limite']}%"
-                )
-
-            texto = "\n".join(
-                linhas
-            )
-
-            if len(texto) > 1024:
-
-                texto = (
-                    texto[:1000]
-                    + "\n..."
-                )
-
-            emoji = emojis_categoria.get(
-                categoria,
-                "📚"
-            )
-
-            embed.add_field(
-                name=(
-                    f"{emoji} "
-                    f"{categoria.title()}"
-                ),
-                value=texto,
-                inline=False
-            )
-
-    else:
+        )
 
         embed.add_field(
-            name="📚 Domínios",
-            value=(
-                "Nenhuma especialização "
-                "desbloqueada."
+            name=(
+                f"{emoji} "
+                f"{nome_categoria}"
             ),
+            value=texto,
             inline=False
         )
+
+    # =====================================================
+    # PONTOS DE DOMÍNIO
+    # =====================================================
 
     embed.add_field(
         name="📈 Pontos de Domínio",
@@ -246,6 +534,10 @@ async def criar_embed_ficha(
         ),
         inline=False
     )
+
+    # =====================================================
+    # ECONOMIA
+    # =====================================================
 
     embed.add_field(
         name="💰 Berries",
@@ -274,6 +566,97 @@ async def criar_embed_ficha(
     )
 
     return embed
+
+
+# =========================================================
+# CRIAR DOMÍNIOS INICIAIS
+# =========================================================
+
+async def criar_dominios_iniciais(
+    user_id,
+    dados
+):
+
+    """
+    Profissão, classe e estilo inicial fazem parte
+    do sistema percentual.
+
+    adicionar_especializacao possui UNIQUE no banco,
+    então mesmo que esta função seja chamada novamente,
+    não duplica o domínio.
+    """
+
+    profissao = dados.get(
+        "profissao"
+    )
+
+    classe = dados.get(
+        "classe"
+    )
+
+    estilo = (
+        dados.get("estilo")
+        or dados.get("estilo_inicial")
+    )
+
+    # =====================================================
+    # PROFISSÃO
+    # =====================================================
+
+    if profissao not in {
+        None,
+        "",
+        "Nenhuma",
+        "Nenhum"
+    }:
+
+        await adicionar_especializacao(
+            user_id=user_id,
+            categoria="profissao",
+            nome=profissao,
+            limite=limite_profissao(
+                profissao
+            ),
+            desbloqueado_por="criacao"
+        )
+
+    # =====================================================
+    # CLASSE
+    # =====================================================
+
+    if classe not in {
+        None,
+        "",
+        "Nenhuma",
+        "Nenhum"
+    }:
+
+        await adicionar_especializacao(
+            user_id=user_id,
+            categoria="classe",
+            nome=classe,
+            limite=200,
+            desbloqueado_por="criacao"
+        )
+
+    # =====================================================
+    # ESTILO INICIAL
+    # =====================================================
+
+    if estilo not in {
+        None,
+        "",
+        "Nenhuma",
+        "Nenhum"
+    }:
+
+        await adicionar_especializacao(
+            user_id=user_id,
+            categoria="estilo",
+            nome=estilo,
+            limite=200,
+            desbloqueado_por="criacao"
+        )
 
 
 # =========================================================
@@ -320,31 +703,101 @@ async def confirmar_criacao(
 
         return
 
+    # =====================================================
+    # DADOS NOVOS DA CRIAÇÃO
+    # =====================================================
+
+    idade = dados.get(
+        "idade"
+    )
+
+    imagem = (
+        dados.get("imagem")
+        or dados.get("imagem_url")
+    )
+
+    haoshoku = dados.get(
+        "haoshoku",
+        False
+    )
+
+    prodigio = dados.get(
+        "prodigio",
+        False
+    )
+
+    estilo = (
+        dados.get("estilo")
+        or dados.get("estilo_inicial")
+        or "Nenhum"
+    )
+
+    # =====================================================
+    # SALVAR FICHA
+    # =====================================================
+
     try:
 
         await criar_ficha(
             user_id=user_id,
             nome=dados["nome"],
+            idade=idade,
+            imagem=imagem,
             raca=dados["raca"],
             familia=dados["familia"],
             faccao=dados["faccao"],
             profissao=dados["profissao"],
             classe=dados["classe"],
+            estilo=estilo,
+            haoshoku=haoshoku,
+            prodigio=prodigio,
             forca=dados["forca"],
             resistencia=dados["resistencia"],
             velocidade=dados["velocidade"],
             pontos_atributo=dados["pontos"]
         )
 
+        # =================================================
+        # CRIAR DOMÍNIOS AUTOMÁTICOS
+        # =================================================
+
+        await criar_dominios_iniciais(
+            user_id,
+            dados
+        )
+
     except Exception as erro:
 
+        print()
+        print("=" * 50)
         print(
-            "❌ ERRO AO CRIAR PERSONAGEM:"
+            "❌ ERRO AO CRIAR PERSONAGEM"
+        )
+        print("=" * 50)
+
+        print(
+            f"Tipo: "
+            f"{type(erro).__name__}"
         )
 
         print(
-            f"{type(erro).__name__}: {erro}"
+            f"Erro: {erro}"
         )
+
+        print("=" * 50)
+        print()
+
+        # Caso a ficha tenha sido criada,
+        # mas algo posterior tenha falhado,
+        # removemos para não deixar criação incompleta.
+
+        if await possui_ficha(
+            user_id
+        ):
+
+            await deletar_ficha(
+                user_id
+            )
 
         await interaction.response.send_message(
             "❌ Não foi possível salvar "
@@ -353,6 +806,10 @@ async def confirmar_criacao(
         )
 
         return
+
+    # =====================================================
+    # FINALIZAR
+    # =====================================================
 
     personagem = await buscar_ficha(
         user_id
@@ -451,7 +908,7 @@ class EditarFichaView(
     ):
 
         super().__init__(
-            timeout=300
+            timeout=TIMEOUT_PAINEL
         )
 
         self.dono_id = dono_id
@@ -661,6 +1118,9 @@ async def salvar_dominios(
 
         elif diferenca < 0:
 
+            # Não devolvemos % ao jogador
+            # sem uma função transacional específica
+            # para isso no database.
             return False
 
     return True
@@ -684,6 +1144,7 @@ def montar_dados_dominios(
             "nome": item["nome"],
             "tipo": item["categoria"],
             "porcentagem": item["porcentagem"],
+            "limite": item["limite"],
         })
 
     return {
@@ -777,7 +1238,8 @@ class Personagem(
 
             await ctx.send(
                 "❌ Você já possui um personagem.\n"
-                "Use `!ficha` para visualizá-lo."
+                "Use `!ficha` para visualizá-lo.",
+                delete_after=TIMEOUT_PAINEL
             )
 
             return
@@ -793,12 +1255,16 @@ class Personagem(
             view=CriacaoView(
                 ctx.author.id,
                 confirmar_criacao
-            )
+            ),
+            delete_after=TIMEOUT_PAINEL
         )
 
 
     # =====================================================
     # !FICHA
+    #
+    # A ficha NÃO some.
+    # É informação permanente do personagem.
     # =====================================================
 
     @commands.command()
@@ -823,7 +1289,8 @@ class Personagem(
 
             await ctx.send(
                 f"❌ {membro.mention} "
-                "ainda não possui ficha."
+                "ainda não possui ficha.",
+                delete_after=TIMEOUT_PAINEL
             )
 
             return
@@ -836,7 +1303,8 @@ class Personagem(
         )
 
 
-    # =====================================================
+    #
+    =====================================================
     # !EDITAR
     # =====================================================
 
@@ -856,7 +1324,8 @@ class Personagem(
 
             await ctx.send(
                 "❌ Você ainda não possui ficha.\n"
-                "Use `!criar` primeiro."
+                "Use `!criar` primeiro.",
+                delete_after=TIMEOUT_PAINEL
             )
 
             return
@@ -868,7 +1337,8 @@ class Personagem(
             ),
             view=EditarFichaView(
                 ctx.author.id
-            )
+            ),
+            delete_after=TIMEOUT_PAINEL
         )
 
 
@@ -895,7 +1365,8 @@ class Personagem(
         if not ficha:
 
             await ctx.send(
-                "❌ Você ainda não possui ficha."
+                "❌ Você ainda não possui ficha.",
+                delete_after=TIMEOUT_PAINEL
             )
 
             return
@@ -916,7 +1387,8 @@ class Personagem(
             embed=embed_atributos(
                 view.dados
             ),
-            view=view
+            view=view,
+            delete_after=TIMEOUT_PAINEL
         )
 
 
@@ -941,7 +1413,8 @@ class Personagem(
         ):
 
             await ctx.send(
-                "❌ Você ainda não possui ficha."
+                "❌ Você ainda não possui ficha.",
+                delete_after=TIMEOUT_PAINEL
             )
 
             return
@@ -973,12 +1446,13 @@ class Personagem(
             embed=criar_embed_dominios(
                 dados
             ),
-            view=view
+            view=view,
+            delete_after=TIMEOUT_PAINEL
         )
 
 
     # =====================================================
-        # !RESETARFICHA
+    # !RESETARFICHA
     # ADMIN
     # =====================================================
 
@@ -1012,14 +1486,16 @@ class Personagem(
 
             await ctx.send(
                 f"❌ {membro.mention} "
-                "não possui ficha."
+                "não possui ficha.",
+                delete_after=TIMEOUT_PAINEL
             )
 
             return
 
         await ctx.send(
             f"🗑️ Ficha de "
-            f"{membro.mention} resetada."
+            f"{membro.mention} resetada.",
+            delete_after=TIMEOUT_PAINEL
         )
 
 
