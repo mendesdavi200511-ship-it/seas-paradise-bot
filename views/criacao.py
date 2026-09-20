@@ -1,9 +1,17 @@
+import random
 import discord
 
 from data.racas import RACAS
 from data.familias import FAMILIAS
 from data.profissoes import PROFISSOES
 from data.classes import CLASSES
+from data.skills import ESTILOS
+
+
+# =========================================================
+# SEA'S PARADISE
+# VIEW — CRIAÇÃO DE PERSONAGEM
+# =========================================================
 
 
 # =========================================================
@@ -13,7 +21,10 @@ from data.classes import CLASSES
 PONTOS_INICIAIS = 30
 ATRIBUTO_MAXIMO = 50000
 
-criando = {}
+CHANCE_HAOSHOKU = 2
+CHANCE_PRODIGIO = 1
+
+TIMEOUT_PAINEL = 20
 
 
 # =========================================================
@@ -36,6 +47,118 @@ ESCALA_ATRIBUTOS = [
 ]
 
 
+# =========================================================
+# PESOS DAS RAÇAS
+# Quanto MENOR, mais difícil.
+# =========================================================
+
+PESOS_RACAS = {
+    "Humano": 100,
+    "Homem-Peixe": 35,
+    "Sereiano": 25,
+    "Mink": 22,
+    "Gigante": 15,
+    "Tontatta": 14,
+    "Skypiean": 18,
+    "Birkan": 12,
+    "Shandian": 16,
+    "Lunarian": 1,
+    "Kuja": 8,
+    "Bucaneiro": 2,
+    "Oni": 2,
+    "Long-Leg": 15,
+    "Long-Arm": 15,
+    "Long-Neck": 15,
+    "Corpo Modificado": 3,
+}
+
+
+# =========================================================
+# PESOS INDIVIDUAIS DAS FAMÍLIAS
+#
+# Quanto MENOR o peso, mais difícil cair.
+#
+# Não usamos apenas "Rara / Lendária / Mítica".
+# O personagem principal da linhagem também pesa.
+# =========================================================
+
+PESOS_FAMILIAS = {
+
+    # -------------------------
+    # EXTREMAMENTE RARAS
+    # -------------------------
+
+    "Nerona": 1,
+    "Gol": 1,
+    "Rocks": 1,
+
+    # -------------------------
+    # MÍTICAS / ALTÍSSIMO NÍVEL
+    # -------------------------
+
+    "Figarland": 2,
+
+    # -------------------------
+    # LENDÁRIAS MUITO FORTES
+    # -------------------------
+
+    "Kaido": 3,
+    "Monkey": 4,
+    "Charlotte": 4,
+    "Shimotsuki": 5,
+    "Kozuki": 6,
+
+    # -------------------------
+    # LENDÁRIAS
+    # -------------------------
+
+    "Sengoku": 7,
+    "Sakazuki": 7,
+    "Borsalino": 7,
+
+    # -------------------------
+    # RARAS PODEROSAS
+    # -------------------------
+
+    "Vinsmoke": 10,
+    "Donquixote": 11,
+    "Enel": 12,
+
+    # -------------------------
+    # RARAS
+    # -------------------------
+
+    "Crocodile": 16,
+    "Smoker": 18,
+    "Nefertari": 18,
+    "Neptune": 18,
+    "Riku": 20,
+
+    # -------------------------
+    # DRAGÕES CELESTIAIS
+    # -------------------------
+
+    "Rosward": 14,
+    "Saint": 14,
+    "Manmayer": 14,
+}
+
+
+# =========================================================
+# ESTADO DAS CRIAÇÕES
+# =========================================================
+
+criando = {}
+
+
+# =========================================================
+# FUNÇÕES AUXILIARES
+# =========================================================
+
+def formatar_numero(valor):
+    return f"{valor:,}".replace(",", ".")
+
+
 def nivel_atributo(valor):
 
     for minimo, nome in ESCALA_ATRIBUTOS:
@@ -46,16 +169,51 @@ def nivel_atributo(valor):
     return "Muito Fraco"
 
 
-def formatar_numero(valor):
+def sortear_percentual(chance):
 
-    return f"{valor:,}".replace(",", ".")
+    return random.randint(
+        1,
+        100
+    ) <= chance
 
 
-def formatar_atributo(valor):
+def sortear_ponderado(
+    catalogo,
+    pesos
+):
 
-    return (
-        f"{formatar_numero(valor)} — "
-        f"**{nivel_atributo(valor)}**"
+    nomes = list(
+        catalogo.keys()
+    )
+
+    lista_pesos = [
+        pesos.get(
+            nome,
+            10
+        )
+        for nome in nomes
+    ]
+
+    return random.choices(
+        nomes,
+        weights=lista_pesos,
+        k=1
+    )[0]
+
+
+def sortear_raca():
+
+    return sortear_ponderado(
+        RACAS,
+        PESOS_RACAS
+    )
+
+
+def sortear_familia():
+
+    return sortear_ponderado(
+        FAMILIAS,
+        PESOS_FAMILIAS
     )
 
 
@@ -67,12 +225,26 @@ def novo_rascunho():
 
     return {
         "nome": None,
+        "idade": None,
+        "imagem": None,
 
-        "raca": "Não definida",
-        "familia": "Não definida",
+        "raca": "Não sorteada",
+        "familia": "Não sorteada",
+
+        "raca_sorteada": False,
+        "familia_sorteada": False,
+
+        "haoshoku": None,
+        "haoshoku_sorteado": False,
+
+        "prodigio": None,
+        "prodigio_sorteado": False,
+
         "faccao": "Civil",
+
         "profissao": "Nenhuma",
         "classe": "Nenhuma",
+        "estilo": "Nenhum",
 
         "forca": 0,
         "resistencia": 0,
@@ -80,6 +252,21 @@ def novo_rascunho():
 
         "pontos": PONTOS_INICIAIS
     }
+
+
+# =========================================================
+# RESULTADO HAOUSHOKU / PRODÍGIO
+# =========================================================
+
+def texto_resultado(valor, sorteado):
+
+    if not sorteado:
+        return "Não sorteado"
+
+    if valor:
+        return "✅ Sim"
+
+    return "❌ Não"
 
 
 # =========================================================
@@ -105,12 +292,40 @@ def criar_embed(usuario):
         title="🏴‍☠️ CRIAÇÃO DE PERSONAGEM",
         description=(
             "Monte seu personagem para entrar no mundo de "
-            "**Sea's Paradise**."
+            "**Sea's Paradise**.\n\n"
+            "🧬 Raça, 🩸 Família, 👑 Haoshoku e "
+            "🌟 Prodígio são definidos por **sorteio único**."
         )
     )
 
-    embed.set_thumbnail(
-        url=usuario.display_avatar.url
+    # =====================================================
+    # IMAGEM
+    # =====================================================
+
+    if dados.get("imagem"):
+
+        embed.set_thumbnail(
+            url=dados["imagem"]
+        )
+
+    else:
+
+        embed.set_thumbnail(
+            url=usuario.display_avatar.url
+        )
+
+    # =====================================================
+    # IDENTIDADE
+    # =====================================================
+
+    idade = dados.get(
+        "idade"
+    )
+
+    idade_texto = (
+        f"{idade} anos"
+        if idade is not None
+        else "Não definida"
     )
 
     embed.add_field(
@@ -118,6 +333,9 @@ def criar_embed(usuario):
         value=(
             f"**Nome:** "
             f"{dados['nome'] or 'Não definido'}\n"
+
+            f"**Idade:** "
+            f"{idade_texto}\n"
 
             f"**Raça:** "
             f"{dados['raca']}\n"
@@ -127,6 +345,10 @@ def criar_embed(usuario):
         ),
         inline=False
     )
+
+    # =====================================================
+    # CAMINHO
+    # =====================================================
 
     embed.add_field(
         name="🌊 Caminho",
@@ -138,22 +360,54 @@ def criar_embed(usuario):
             f"{dados['profissao']}\n"
 
             f"**Classe:** "
-            f"{dados['classe']}"
+            f"{dados['classe']}\n"
+
+            f"**Estilo Inicial:** "
+            f"{dados['estilo']}"
         ),
         inline=False
     )
+
+    # =====================================================
+    # TALENTOS
+    # =====================================================
+
+    embed.add_field(
+        name="✨ Talentos",
+        value=(
+            f"👑 **Haoshoku:** "
+            f"{texto_resultado(
+                dados['haoshoku'],
+                dados['haoshoku_sorteado']
+            )}\n"
+
+            f"🌟 **Prodígio:** "
+            f"{texto_resultado(
+                dados['prodigio'],
+                dados['prodigio_sorteado']
+            )}"
+        ),
+        inline=False
+    )
+
+    # =====================================================
+    # ATRIBUTOS
+    # =====================================================
 
     embed.add_field(
         name="⚔️ Atributos",
         value=(
             f"💪 **Força:** "
-            f"{formatar_atributo(dados['forca'])}\n"
+            f"{formatar_numero(dados['forca'])} "
+            f"— {nivel_atributo(dados['forca'])}\n"
 
             f"🛡️ **Resistência:** "
-            f"{formatar_atributo(dados['resistencia'])}\n"
+            f"{formatar_numero(dados['resistencia'])} "
+            f"— {nivel_atributo(dados['resistencia'])}\n"
 
             f"💨 **Velocidade/Agilidade:** "
-            f"{formatar_atributo(dados['velocidade'])}\n\n"
+            f"{formatar_numero(dados['velocidade'])} "
+            f"— {nivel_atributo(dados['velocidade'])}\n\n"
 
             f"✨ **Pontos disponíveis:** "
             f"{formatar_numero(dados['pontos'])}"
@@ -164,7 +418,7 @@ def criar_embed(usuario):
     embed.set_footer(
         text=(
             "Sea's Paradise • "
-            "Criação de Personagem"
+            "Painel expira após 20 segundos"
         )
     )
 
@@ -182,22 +436,27 @@ class ViewDoJogador(
     def __init__(
         self,
         dono_id,
-        confirmar_callback
+        confirmar_callback=None
     ):
 
         super().__init__(
-            timeout=600
+            timeout=TIMEOUT_PAINEL
         )
 
         self.dono_id = dono_id
         self.confirmar_callback = confirmar_callback
+
+        self.message = None
 
     async def interaction_check(
         self,
         interaction
     ):
 
-        if interaction.user.id != self.dono_id:
+        if (
+            interaction.user.id
+            != self.dono_id
+        ):
 
             await interaction.response.send_message(
                 "❌ Esse painel pertence "
@@ -209,6 +468,26 @@ class ViewDoJogador(
 
         return True
 
+    async def on_timeout(self):
+
+        criando.pop(
+            self.dono_id,
+            None
+        )
+
+        if self.message:
+
+            try:
+
+                await self.message.delete()
+
+            except (
+                discord.NotFound,
+                discord.Forbidden,
+                discord.HTTPException
+            ):
+                pass
+
     def painel_principal(self):
 
         return CriacaoView(
@@ -218,7 +497,7 @@ class ViewDoJogador(
 
 
 # =========================================================
-# NOME
+# MODAL — NOME
 # =========================================================
 
 class NomeModal(
@@ -234,7 +513,9 @@ class NomeModal(
             title="Nome do Personagem"
         )
 
-        self.confirmar_callback = confirmar_callback
+        self.confirmar_callback = (
+            confirmar_callback
+        )
 
         self.nome = discord.ui.TextInput(
             label="Nome",
@@ -281,7 +562,281 @@ class NomeModal(
 
 
 # =========================================================
+# MODAL — IDADE
+# =========================================================
+
+class IdadeModal(
+    discord.ui.Modal
+):
+
+    def __init__(
+        self,
+        confirmar_callback
+    ):
+
+        super().__init__(
+            title="Idade do Personagem"
+        )
+
+        self.confirmar_callback = (
+            confirmar_callback
+        )
+
+        self.idade = discord.ui.TextInput(
+            label="Idade",
+            placeholder="Ex: 21",
+            min_length=1,
+            max_length=3
+        )
+
+        self.add_item(
+            self.idade
+        )
+
+    async def on_submit(
+        self,
+        interaction
+    ):
+
+        dados = criando.get(
+            interaction.user.id
+        )
+
+        if not dados:
+
+            await interaction.response.send_message(
+                "❌ Sua criação não está mais ativa.",
+                ephemeral=True
+            )
+
+            return
+
+        try:
+
+            idade = int(
+                self.idade.value
+            )
+
+        except ValueError:
+
+            await interaction.response.send_message(
+                "❌ Digite uma idade válida.",
+                ephemeral=True
+            )
+
+            return
+
+        if idade < 1 or idade > 999:
+
+            await interaction.response.send_message(
+                "❌ A idade precisa estar entre "
+                "**1 e 999 anos**.",
+                ephemeral=True
+            )
+
+            return
+
+        dados["idade"] = idade
+
+        await interaction.response.edit_message(
+            embed=criar_embed(
+                interaction.user
+            ),
+            view=CriacaoView(
+                interaction.user.id,
+                self.confirmar_callback
+            )
+        )
+
+
+# =========================================================
+# MODAL — IMAGEM
+# =========================================================
+
+class ImagemModal(
+    discord.ui.Modal
+):
+
+    def __init__(
+        self,
+        confirmar_callback
+    ):
+
+        super().__init__(
+            title="Imagem do Personagem"
+        )
+
+        self.confirmar_callback = (
+            confirmar_callback
+        )
+
+        self.imagem = discord.ui.TextInput(
+            label="Link da imagem",
+            placeholder="https://...",
+            min_length=8,
+            max_length=500
+        )
+
+        self.add_item(
+            self.imagem
+        )
+
+    async def on_submit(
+        self,
+        interaction
+    ):
+
+        dados = criando.get(
+            interaction.user.id
+        )
+
+        if not dados:
+
+            await interaction.response.send_message(
+                "❌ Sua criação não está mais ativa.",
+                ephemeral=True
+            )
+
+            return
+
+        url = (
+            self.imagem.value.strip()
+        )
+
+        if not (
+            url.startswith("http://")
+            or url.startswith("https://")
+        ):
+
+            await interaction.response.send_message(
+                "❌ Envie um link válido começando "
+                "com `http://` ou `https://`.",
+                ephemeral=True
+            )
+
+            return
+
+        dados["imagem"] = url
+
+        await interaction.response.edit_message(
+            embed=criar_embed(
+                interaction.user
+            ),
+            view=CriacaoView(
+                interaction.user.id,
+                self.confirmar_callback
+            )
+        )
+
+
+# =========================================================
+# FACÇÕES
+# =========================================================
+
+FACCOES = {
+    "Pirata": "🏴‍☠️",
+    "Marinha": "⚓",
+    "Revolucionário": "🔥",
+    "Civil": "🏝️"
+}
+
+
+class FaccaoSelect(
+    discord.ui.Select
+):
+
+    def __init__(self):
+
+        opcoes = [
+            discord.SelectOption(
+                label=nome,
+                value=nome,
+                emoji=emoji
+            )
+            for nome, emoji
+            in FACCOES.items()
+        ]
+
+        super().__init__(
+            placeholder="Escolha sua facção...",
+            options=opcoes,
+            row=0
+        )
+
+    async def callback(
+        self,
+        interaction
+    ):
+
+        dados = criando.get(
+            interaction.user.id
+        )
+
+        if not dados:
+
+            await interaction.response.send_message(
+                "❌ Sua criação expirou.",
+                ephemeral=True
+            )
+
+            return
+
+        dados["faccao"] = (
+            self.values[0]
+        )
+
+        view = self.view
+
+        await interaction.response.edit_message(
+            embed=criar_embed(
+                interaction.user
+            ),
+            view=view.painel_principal()
+        )
+
+
+class FaccaoView(
+    ViewDoJogador
+):
+
+    def __init__(
+        self,
+        dono_id,
+        confirmar_callback
+    ):
+
+        super().__init__(
+            dono_id,
+            confirmar_callback
+        )
+
+        self.add_item(
+            FaccaoSelect()
+        )
+
+    @discord.ui.button(
+        label="Voltar",
+        emoji="↩️",
+        style=discord.ButtonStyle.secondary,
+        row=1
+    )
+    async def voltar(
+        self,
+        interaction,
+        button
+    ):
+
+        await interaction.response.edit_message(
+            embed=criar_embed(
+                interaction.user
+            ),
+            view=self.painel_principal()
+        )
+
+
+# =========================================================
 # CATÁLOGO GENÉRICO
+# PROFISSÃO / CLASSE / ESTILO
 # =========================================================
 
 class CatalogoSelect(
@@ -315,18 +870,29 @@ class CatalogoSelect(
                     "emoji"
                 )
 
-                descricao_original = dados.get(
-                    "descricao"
+                descricao_original = (
+                    dados.get(
+                        "descricao"
+                    )
                 )
 
                 if descricao_original:
 
-                    descricao = (
-                        descricao_original[:97]
-                        + "..."
-                        if len(descricao_original) > 100
-                        else descricao_original
-                    )
+                    if (
+                        len(descricao_original)
+                        > 100
+                    ):
+
+                        descricao = (
+                            descricao_original[:97]
+                            + "..."
+                        )
+
+                    else:
+
+                        descricao = (
+                            descricao_original
+                        )
 
             opcoes.append(
                 discord.SelectOption(
@@ -422,130 +988,17 @@ class CatalogoView(
 
 
 # =========================================================
-# FACÇÕES
-# =========================================================
-
-FACCOES = {
-    "Pirata": "🏴‍☠️",
-    "Marinha": "⚓",
-    "Revolucionário": "🔥",
-    "Civil": "🏝️"
-}
-
-
-class FaccaoSelect(
-    discord.ui.Select
-):
-
-    def __init__(
-        self
-    ):
-
-        opcoes = [
-            discord.SelectOption(
-                label=nome,
-                value=nome,
-                emoji=emoji
-            )
-            for nome, emoji
-            in FACCOES.items()
-        ]
-
-        super().__init__(
-            placeholder=(
-                "Escolha sua facção..."
-            ),
-            options=opcoes,
-            row=0
-        )
-
-    async def callback(
-        self,
-        interaction
-    ):
-
-        dados = criando.get(
-            interaction.user.id
-        )
-
-        if not dados:
-
-            await interaction.response.send_message(
-                "❌ Sua criação expirou.",
-                ephemeral=True
-            )
-
-            return
-
-        dados["faccao"] = (
-            self.values[0]
-        )
-
-        view = self.view
-
-        await interaction.response.edit_message(
-            embed=criar_embed(
-                interaction.user
-            ),
-            view=view.painel_principal()
-        )
-
-
-class FaccaoView(
-    ViewDoJogador
-):
-
-    def __init__(
-        self,
-        dono_id,
-        confirmar_callback
-    ):
-
-        super().__init__(
-            dono_id,
-            confirmar_callback
-        )
-
-        self.add_item(
-            FaccaoSelect()
-        )
-
-    @discord.ui.button(
-        label="Voltar",
-        emoji="↩️",
-        style=discord.ButtonStyle.secondary,
-        row=1
-    )
-    async def voltar(
-        self,
-        interaction,
-        button
-    ):
-
-        await interaction.response.edit_message(
-            embed=criar_embed(
-                interaction.user
-            ),
-            view=self.painel_principal()
-        )
-
-
-# =========================================================
-# SELETOR DE ATRIBUTO
+# ATRIBUTOS — SELECT
 # =========================================================
 
 class CriacaoAtributoSelect(
     discord.ui.Select
 ):
 
-    def __init__(
-        self
-    ):
+    def __init__(self):
 
         super().__init__(
-            placeholder=(
-                "Escolha o atributo..."
-            ),
+            placeholder="Escolha o atributo...",
             options=[
                 discord.SelectOption(
                     label="Força",
@@ -584,7 +1037,7 @@ class CriacaoAtributoSelect(
 
 
 # =========================================================
-# BOTÕES DE QUANTIDADE
+# ATRIBUTOS — QUANTIDADE
 # =========================================================
 
 class CriacaoQuantidadeButton(
@@ -624,7 +1077,9 @@ class CriacaoQuantidadeButton(
 
             return
 
-        atributo = view.atributo
+        atributo = (
+            view.atributo
+        )
 
         if atributo is None:
 
@@ -661,13 +1116,13 @@ class CriacaoQuantidadeButton(
 
             return
 
-        dados[
-            atributo
-        ] += self.quantidade
+        dados[atributo] += (
+            self.quantidade
+        )
 
-        dados[
-            "pontos"
-        ] -= self.quantidade
+        dados["pontos"] -= (
+            self.quantidade
+        )
 
         await interaction.response.edit_message(
             embed=criar_embed(
@@ -678,7 +1133,7 @@ class CriacaoQuantidadeButton(
 
 
 # =========================================================
-# ATRIBUTOS DA CRIAÇÃO
+# ATRIBUTOS — VIEW
 # =========================================================
 
 class CriacaoAtributosView(
@@ -702,6 +1157,8 @@ class CriacaoAtributosView(
             CriacaoAtributoSelect()
         )
 
+        # Como a criação agora começa com 30,
+        # não há motivo para +50/+100/+300 aqui.
         for quantidade in (
             1,
             5,
@@ -747,9 +1204,9 @@ class CriacaoAtributosView(
             + dados["velocidade"]
         )
 
-        dados[
-            "pontos"
-        ] += total_distribuido
+        dados["pontos"] += (
+            total_distribuido
+        )
 
         dados["forca"] = 0
         dados["resistencia"] = 0
@@ -786,7 +1243,71 @@ class CriacaoAtributosView(
 
 
 # =========================================================
-# PAINEL PRINCIPAL
+# APLICAR EFEITOS AUTOMÁTICOS DA FAMÍLIA
+# =========================================================
+
+def aplicar_efeitos_familia(
+    dados
+):
+
+    familia = dados[
+        "familia"
+    ]
+
+    # =====================================================
+    # VINSMOKE
+    # Raça obrigatória
+    # =====================================================
+
+    if familia == "Vinsmoke":
+
+        dados["raca"] = (
+            "Corpo Modificado"
+        )
+
+        dados["raca_sorteada"] = True
+
+    # =====================================================
+    # ENEL
+    # Raça obrigatória
+    # =====================================================
+
+    elif familia == "Enel":
+
+        dados["raca"] = (
+            "Birkan"
+        )
+
+        dados["raca_sorteada"] = True
+
+    # =====================================================
+    # FAMÍLIAS COM QUALIDADE DE REI / HAOUSHOKU
+    # =====================================================
+
+    if familia in {
+        "Monkey",
+        "Rocks",
+        "Gol"
+    }:
+
+        dados["haoshoku"] = True
+        dados["haoshoku_sorteado"] = True
+
+    # =====================================================
+    # FAMÍLIAS COM PRODÍGIO AUTOMÁTICO
+    # =====================================================
+
+    if familia in {
+        "Rocks",
+        "Sengoku"
+    }:
+
+        dados["prodigio"] = True
+        dados["prodigio_sorteado"] = True
+
+
+# =========================================================
+# VIEW PRINCIPAL
 # =========================================================
 
 class CriacaoView(
@@ -796,13 +1317,18 @@ class CriacaoView(
     def __init__(
         self,
         dono_id,
-        confirmar_callback
+        confirmar_callback=None
     ):
 
         super().__init__(
             dono_id,
             confirmar_callback
         )
+
+    #
+    =====================================================
+    # NOME
+    # =====================================================
 
     @discord.ui.button(
         label="Nome",
@@ -822,11 +1348,59 @@ class CriacaoView(
             )
         )
 
+    # =====================================================
+    # IDADE
+    # =====================================================
+
     @discord.ui.button(
-        label="Raça",
-        emoji="🧬",
+        label="Idade",
+        emoji="🎂",
         style=discord.ButtonStyle.primary,
         row=0
+    )
+    async def idade(
+        self,
+        interaction,
+        button
+    ):
+
+        await interaction.response.send_modal(
+            IdadeModal(
+                self.confirmar_callback
+            )
+        )
+
+    # =====================================================
+    # IMAGEM
+    # =====================================================
+
+    @discord.ui.button(
+        label="Imagem",
+        emoji="🖼️",
+        style=discord.ButtonStyle.secondary,
+        row=0
+    )
+    async def imagem(
+        self,
+        interaction,
+        button
+    ):
+
+        await interaction.response.send_modal(
+            ImagemModal(
+                self.confirmar_callback
+            )
+        )
+
+    # =====================================================
+    # RAÇA — SORTEIO ÚNICO
+    # =====================================================
+
+    @discord.ui.button(
+        label="Sortear Raça",
+        emoji="🧬",
+        style=discord.ButtonStyle.primary,
+        row=1
     )
     async def raca(
         self,
@@ -834,24 +1408,57 @@ class CriacaoView(
         button
     ):
 
+        dados = criando.get(
+            interaction.user.id
+        )
+
+        if not dados:
+
+            await interaction.response.send_message(
+                "❌ Sua criação expirou.",
+                ephemeral=True
+            )
+
+            return
+
+        if dados[
+            "raca_sorteada"
+        ]:
+
+            await interaction.response.send_message(
+                "❌ Sua raça já foi definida.",
+                ephemeral=True
+            )
+
+            return
+
+        dados["raca"] = (
+            sortear_raca()
+        )
+
+        dados[
+            "raca_sorteada"
+        ] = True
+
         await interaction.response.edit_message(
             embed=criar_embed(
                 interaction.user
             ),
-            view=CatalogoView(
-                self.dono_id,
-                self.confirmar_callback,
-                "raca",
-                RACAS,
-                "Escolha sua raça..."
+            view=CriacaoView(
+                interaction.user.id,
+                self.confirmar_callback
             )
         )
 
+    # =====================================================
+    # FAMÍLIA — SORTEIO ÚNICO
+    # =====================================================
+
     @discord.ui.button(
-        label="Família",
+        label="Sortear Família",
         emoji="🩸",
         style=discord.ButtonStyle.primary,
-        row=0
+        row=1
     )
     async def familia(
         self,
@@ -859,24 +1466,183 @@ class CriacaoView(
         button
     ):
 
+        dados = criando.get(
+            interaction.user.id
+        )
+
+        if not dados:
+
+            await interaction.response.send_message(
+                "❌ Sua criação expirou.",
+                ephemeral=True
+            )
+
+            return
+
+        if dados[
+            "familia_sorteada"
+        ]:
+
+            await interaction.response.send_message(
+                "❌ Sua família já foi definida.",
+                ephemeral=True
+            )
+
+            return
+
+        dados["familia"] = (
+            sortear_familia()
+        )
+
+        dados[
+            "familia_sorteada"
+        ] = True
+
+        aplicar_efeitos_familia(
+            dados
+        )
+
         await interaction.response.edit_message(
             embed=criar_embed(
                 interaction.user
             ),
-            view=CatalogoView(
-                self.dono_id,
-                self.confirmar_callback,
-                "familia",
-                FAMILIAS,
-                "Escolha sua família..."
+            view=CriacaoView(
+                interaction.user.id,
+                self.confirmar_callback
             )
         )
+
+    # =====================================================
+    # HAOUSHOKU — 2%
+    # =====================================================
+
+    @discord.ui.button(
+        label="Sortear Haoshoku",
+        emoji="👑",
+        style=discord.ButtonStyle.secondary,
+        row=2
+    )
+    async def haoshoku(
+        self,
+        interaction,
+        button
+    ):
+
+        dados = criando.get(
+            interaction.user.id
+        )
+
+        if not dados:
+
+            await interaction.response.send_message(
+                "❌ Sua criação expirou.",
+                ephemeral=True
+            )
+
+            return
+
+        if dados[
+            "haoshoku_sorteado"
+        ]:
+
+            await interaction.response.send_message(
+                "❌ O Haoshoku deste personagem "
+                "já foi definido.",
+                ephemeral=True
+            )
+
+            return
+
+        dados["haoshoku"] = (
+            sortear_percentual(
+                CHANCE_HAOSHOKU
+            )
+        )
+
+        dados[
+            "haoshoku_sorteado"
+        ] = True
+
+        await interaction.response.edit_message(
+            embed=criar_embed(
+                interaction.user
+            ),
+            view=CriacaoView(
+                interaction.user.id,
+                self.confirmar_callback
+            )
+        )
+
+    # =====================================================
+    # PRODÍGIO — 1%
+    # =====================================================
+
+    @discord.ui.button(
+        label="Sortear Prodígio",
+        emoji="🌟",
+        style=discord.ButtonStyle.secondary,
+        row=2
+    )
+    async def prodigio(
+        self,
+        interaction,
+        button
+    ):
+
+        dados = criando.get(
+            interaction.user.id
+        )
+
+        if not dados:
+
+            await interaction.response.send_message(
+                "❌ Sua criação expirou.",
+                ephemeral=True
+            )
+
+            return
+
+        if dados[
+            "prodigio_sorteado"
+        ]:
+
+            await interaction.response.send_message(
+                "❌ O Prodígio deste personagem "
+                "já foi definido.",
+                ephemeral=True
+            )
+
+            return
+
+        dados["prodigio"] = (
+            sortear_percentual(
+                CHANCE_PRODIGIO
+            )
+        )
+
+        dados[
+            "prodigio_sorteado"
+        ] = True
+
+        await interaction.response.edit_message(
+            embed=criar_embed(
+                interaction.user
+            ),
+            view=CriacaoView(
+                interaction.user.id,
+                self.confirmar_callback
+            )
+        )
+
+    # =====================================================
+    # FACÇÃO
+    # =====================================================
 
     @discord.ui.button(
         label="Facção",
         emoji="🌊",
         style=discord.ButtonStyle.secondary,
-        row=1
+        row=2
     )
     async def faccao(
         self,
@@ -894,11 +1660,15 @@ class CriacaoView(
             )
         )
 
+    # =====================================================
+    # PROFISSÃO
+    # =====================================================
+
     @discord.ui.button(
         label="Profissão",
         emoji="🛠️",
         style=discord.ButtonStyle.secondary,
-        row=1
+        row=3
     )
     async def profissao(
         self,
@@ -919,11 +1689,15 @@ class CriacaoView(
             )
         )
 
+    # =====================================================
+    # CLASSE
+    # =====================================================
+
     @discord.ui.button(
         label="Classe",
         emoji="⚔️",
         style=discord.ButtonStyle.secondary,
-        row=1
+        row=3
     )
     async def classe(
         self,
@@ -944,11 +1718,44 @@ class CriacaoView(
             )
         )
 
+    #
+        # ESTILO INICIAL
+    # =====================================================
+
+    @discord.ui.button(
+        label="Estilo",
+        emoji="🥋",
+        style=discord.ButtonStyle.secondary,
+        row=3
+    )
+    async def estilo(
+        self,
+        interaction,
+        button
+    ):
+
+        await interaction.response.edit_message(
+            embed=criar_embed(
+                interaction.user
+            ),
+            view=CatalogoView(
+                self.dono_id,
+                self.confirmar_callback,
+                "estilo",
+                ESTILOS,
+                "Escolha seu estilo inicial..."
+            )
+        )
+
+    # =====================================================
+    # ATRIBUTOS
+    # =====================================================
+
     @discord.ui.button(
         label="Atributos",
         emoji="✨",
         style=discord.ButtonStyle.primary,
-        row=2
+        row=4
     )
     async def atributos(
         self,
@@ -966,11 +1773,15 @@ class CriacaoView(
             )
         )
 
+    # =====================================================
+    # CONFIRMAR
+    # =====================================================
+
     @discord.ui.button(
         label="Confirmar Personagem",
         emoji="✅",
         style=discord.ButtonStyle.success,
-        row=3
+        row=4
     )
     async def confirmar(
         self,
@@ -1000,57 +1811,151 @@ class CriacaoView(
 
             return
 
-        if not dados["nome"]:
+        # =================================================
+        # NOME
+        # =================================================
+
+        if not dados[
+            "nome"
+        ]:
 
             await interaction.response.send_message(
-                "❌ Defina o **nome** do personagem "
-                "antes de confirmar.",
+                "❌ Defina o **nome** do personagem.",
                 ephemeral=True
             )
 
             return
 
-        if dados["raca"] == "Não definida":
+        # =================================================
+        # IDADE
+        # =================================================
+
+        if dados[
+            "idade"
+        ] is None:
 
             await interaction.response.send_message(
-                "❌ Escolha uma **raça** "
-                "antes de confirmar.",
+                "❌ Defina a **idade** do personagem.",
                 ephemeral=True
             )
 
             return
 
-        if dados["familia"] == "Não definida":
+        # =================================================
+        # RAÇA
+        # =================================================
+
+        if not dados[
+            "raca_sorteada"
+        ]:
 
             await interaction.response.send_message(
-                "❌ Escolha uma **família** "
-                "antes de confirmar.",
+                "❌ Faça o sorteio da **raça**.",
                 ephemeral=True
             )
 
             return
 
-        if dados["profissao"] == "Nenhuma":
+        # =================================================
+        # FAMÍLIA
+        # =================================================
+
+        if not dados[
+            "familia_sorteada"
+        ]:
 
             await interaction.response.send_message(
-                "❌ Escolha uma **profissão** "
-                "antes de confirmar.",
+                "❌ Faça o sorteio da **família**.",
                 ephemeral=True
             )
 
             return
 
-        if dados["classe"] == "Nenhuma":
+        # =================================================
+        # HAOUSHOKU
+        # =================================================
+
+        if not dados[
+            "haoshoku_sorteado"
+        ]:
 
             await interaction.response.send_message(
-                "❌ Escolha uma **classe** "
-                "antes de confirmar.",
+                "❌ Faça o sorteio de **Haoshoku**.",
                 ephemeral=True
             )
 
             return
 
-        if dados["pontos"] > 0:
+        # =================================================
+        # PRODÍGIO
+        # =================================================
+
+        if not dados[
+            "prodigio_sorteado"
+        ]:
+
+            await interaction.response.send_message(
+                "❌ Faça o sorteio de **Prodígio**.",
+                ephemeral=True
+            )
+
+            return
+
+        # =================================================
+        # PROFISSÃO
+        # =================================================
+
+        if (
+            dados["profissao"]
+            == "Nenhuma"
+        ):
+
+            await interaction.response.send_message(
+                "❌ Escolha uma **profissão**.",
+                ephemeral=True
+            )
+
+            return
+
+        # =================================================
+        # CLASSE
+        # =================================================
+
+        if (
+            dados["classe"]
+            == "Nenhuma"
+        ):
+
+            await interaction.response.send_message(
+                "❌ Escolha uma **classe**.",
+                ephemeral=True
+            )
+
+            return
+
+        # =================================================
+        # ESTILO
+        # =================================================
+
+        if (
+            dados["estilo"]
+            == "Nenhum"
+        ):
+
+            await interaction.response.send_message(
+                "❌ Escolha um **estilo inicial**.",
+                ephemeral=True
+            )
+
+            return
+
+        # =================================================
+        # ATRIBUTOS
+        # =================================================
+
+        if dados[
+            "pontos"
+        ] > 0:
 
             await interaction.response.send_message(
                 (
@@ -1063,6 +1968,10 @@ class CriacaoView(
 
             return
 
+        # =================================================
+        # SALVAR
+        # =================================================
+
         await self.confirmar_callback(
             interaction
-            )
+                )
