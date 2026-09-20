@@ -4,6 +4,7 @@ from discord.ext import commands
 from database.database import (
     possui_ficha,
     buscar_ficha,
+    criar_ficha,
     deletar_ficha,
     buscar_especializacoes,
     buscar_pontos_percentuais,
@@ -146,6 +147,7 @@ async def criar_embed_ficha(membro, personagem):
             "akuma no mi": "🍈",
             "tecnica": "💥",
             "especializacao": "✨",
+            "despertar": "🌟",
         }
 
         for categoria, itens in categorias.items():
@@ -240,6 +242,128 @@ async def criar_embed_ficha(membro, personagem):
 
 
 # =========================================================
+# CALLBACK — CONFIRMAR CRIAÇÃO
+# =========================================================
+
+async def confirmar_criacao(interaction):
+
+    user_id = interaction.user.id
+
+    dados = criando.get(
+        user_id
+    )
+
+    if not dados:
+
+        await interaction.response.send_message(
+            "❌ Sua criação não está mais ativa.",
+            ephemeral=True
+        )
+        return
+
+    # =====================================================
+    # PROTEÇÃO CONTRA DUPLICAÇÃO
+    # =====================================================
+
+    if await possui_ficha(user_id):
+
+        criando.pop(
+            user_id,
+            None
+        )
+
+        await interaction.response.edit_message(
+            content=(
+                "❌ Você já possui um personagem."
+            ),
+            embed=None,
+            view=None
+        )
+
+        return
+
+    # =====================================================
+    # SALVAR NO POSTGRESQL
+    # =====================================================
+
+    try:
+
+        await criar_ficha(
+            user_id=user_id,
+            nome=dados["nome"],
+            raca=dados["raca"],
+            familia=dados["familia"],
+            faccao=dados["faccao"],
+            profissao=dados["profissao"],
+            classe=dados["classe"],
+            forca=dados["forca"],
+            resistencia=dados["resistencia"],
+            velocidade=dados["velocidade"],
+            pontos_atributo=dados["pontos"]
+        )
+
+    except Exception as erro:
+
+        print(
+            "❌ ERRO AO CRIAR PERSONAGEM:"
+        )
+
+        print(
+            f"{type(erro).__name__}: {erro}"
+        )
+
+        await interaction.response.send_message(
+            "❌ Não foi possível salvar "
+            "seu personagem.",
+            ephemeral=True
+        )
+
+        return
+
+    # =====================================================
+    # BUSCAR PERSONAGEM SALVO
+    # =====================================================
+
+    personagem = await buscar_ficha(
+        user_id
+    )
+
+    # =====================================================
+    # ENCERRAR RASCUNHO
+    # =====================================================
+
+    criando.pop(
+        user_id,
+        None
+    )
+
+    # =====================================================
+    # MOSTRAR FICHA FINAL
+    # =====================================================
+
+    if personagem:
+
+        await interaction.response.edit_message(
+            content=None,
+            embed=await criar_embed_ficha(
+                interaction.user,
+                personagem
+            ),
+            view=None
+        )
+
+    else:
+
+        await interaction.response.edit_message(
+            content=(
+                "✅ Personagem criado com sucesso!"
+            ),
+            embed=None,
+            view=None
+        )
+
+
+# =========================================================
 # MODAL — EDITAR NOME
 # =========================================================
 
@@ -277,7 +401,6 @@ class EditarNomeModal(
                 "❌ Ficha não encontrada.",
                 ephemeral=True
             )
-
             return
 
         await interaction.response.edit_message(
@@ -327,10 +450,6 @@ class EditarFichaView(
 
         return True
 
-    # =====================================================
-    # EDITAR NOME
-    # =====================================================
-
     @discord.ui.button(
         label="Editar Nome",
         emoji="✏️",
@@ -347,10 +466,6 @@ class EditarFichaView(
             EditarNomeModal()
         )
 
-    # =====================================================
-    # ATRIBUTOS
-    # =====================================================
-
     @discord.ui.button(
         label="Atributos",
         emoji="💪",
@@ -366,10 +481,6 @@ class EditarFichaView(
         await abrir_atributos(
             interaction
         )
-
-    # =====================================================
-    # DOMÍNIOS
-    # =====================================================
 
     @discord.ui.button(
         label="Domínios",
@@ -423,7 +534,7 @@ async def voltar_edicao(
 
 
 # =========================================================
-# ABRIR PAINEL DE ATRIBUTOS
+# ABRIR ATRIBUTOS
 # =========================================================
 
 async def abrir_atributos(
@@ -440,7 +551,6 @@ async def abrir_atributos(
             "❌ Você ainda não possui ficha.",
             ephemeral=True
         )
-
         return
 
     dados = {
@@ -465,7 +575,7 @@ async def abrir_atributos(
 
 
 # =========================================================
-# SALVAR ALTERAÇÕES DE DOMÍNIO
+# SALVAR DOMÍNIOS
 # =========================================================
 
 async def salvar_dominios(
@@ -510,10 +620,6 @@ async def salvar_dominios(
             - porcentagem_banco
         )
 
-        # -------------------------------------------------
-        # ADICIONAR %
-        # -------------------------------------------------
-
         if diferenca > 0:
 
             sucesso = await distribuir_percentual(
@@ -525,15 +631,6 @@ async def salvar_dominios(
             if not sucesso:
                 return False
 
-        # -------------------------------------------------
-        # OBS:
-        # Retirada de % depende de função específica
-        # do database.
-        #
-        # Por enquanto não alteramos diretamente o banco
-        # aqui para evitar duplicar pontos ou quebrar saldo.
-        # -------------------------------------------------
-
         elif diferenca < 0:
 
             return False
@@ -542,7 +639,7 @@ async def salvar_dominios(
 
 
 # =========================================================
-# CONVERTER ESPECIALIZAÇÕES PARA VIEW
+# MONTAR DADOS DOS DOMÍNIOS
 # =========================================================
 
 def montar_dados_dominios(
@@ -568,7 +665,7 @@ def montar_dados_dominios(
 
 
 # =========================================================
-# ABRIR PAINEL DE DOMÍNIOS
+# ABRIR DOMÍNIOS
 # =========================================================
 
 async def abrir_dominios(
@@ -585,7 +682,6 @@ async def abrir_dominios(
             "❌ Você ainda não possui ficha.",
             ephemeral=True
         )
-
         return
 
     especializacoes = list(
@@ -619,7 +715,7 @@ async def abrir_dominios(
 
 
 # =========================================================
-# COG — PERSONAGEM
+# COG
 # =========================================================
 
 class Personagem(
@@ -664,7 +760,8 @@ class Personagem(
                 ctx.author
             ),
             view=CriacaoView(
-                ctx.author.id
+                ctx.author.id,
+                confirmar_criacao
             )
         )
 
