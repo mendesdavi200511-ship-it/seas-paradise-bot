@@ -40,27 +40,73 @@ from views.dominios import (
 # =========================================================
 
 def formatar_numero(valor):
+
     return f"{valor:,}".replace(",", ".")
+
+
+ESCALA_ATRIBUTOS = [
+    (50000, "Lendário"),
+    (25000, "Titânico"),
+    (10000, "Sobre-Humano"),
+    (5000, "Monstruoso"),
+    (2000, "Excepcional"),
+    (1000, "Muito Forte"),
+    (600, "Forte"),
+    (350, "Bom"),
+    (200, "Mediano"),
+    (100, "Normal"),
+    (50, "Fraco"),
+    (20, "Muito Fraco"),
+]
+
+
+def nivel_atributo(valor):
+
+    for minimo, nome in ESCALA_ATRIBUTOS:
+
+        if valor >= minimo:
+            return nome
+
+    return "Muito Fraco"
+
+
+def formatar_atributo(valor):
+
+    return (
+        f"{formatar_numero(valor)} — "
+        f"**{nivel_atributo(valor)}**"
+    )
 
 
 # =========================================================
 # EMBED DA FICHA
 # =========================================================
 
-async def criar_embed_ficha(membro, personagem):
+async def criar_embed_ficha(
+    membro,
+    personagem
+):
 
-    especializacoes = await buscar_especializacoes(
-        membro.id
+    especializacoes = (
+        await buscar_especializacoes(
+            membro.id
+        )
     )
 
-    pontos_percentuais = await buscar_pontos_percentuais(
-        membro.id
+    pontos_percentuais = (
+        await buscar_pontos_percentuais(
+            membro.id
+        )
     )
 
     embed = discord.Embed(
-        title=f"🏴‍☠️ {personagem['nome']}",
+        title=(
+            f"🏴‍☠️ "
+            f"{personagem['nome']}"
+        ),
         description=(
-            "**Ficha de Personagem — Sea's Paradise**"
+            "**Ficha de Personagem — "
+            "Sea's Paradise**"
         )
     )
 
@@ -68,58 +114,50 @@ async def criar_embed_ficha(membro, personagem):
         url=membro.display_avatar.url
     )
 
-    # =====================================================
-    # IDENTIDADE
-    # =====================================================
-
     embed.add_field(
         name="👤 Identidade",
         value=(
-            f"**Raça:** {personagem['raca']}\n"
-            f"**Família:** {personagem['familia']}\n"
-            f"**Facção:** {personagem['faccao']}"
+            f"**Raça:** "
+            f"{personagem['raca']}\n"
+
+            f"**Família:** "
+            f"{personagem['familia']}\n"
+
+            f"**Facção:** "
+            f"{personagem['faccao']}"
         ),
         inline=False
     )
-
-    # =====================================================
-    # CAMINHO
-    # =====================================================
 
     embed.add_field(
         name="🧭 Caminho",
         value=(
-            f"**Profissão:** {personagem['profissao']}\n"
-            f"**Classe:** {personagem['classe']}"
+            f"**Profissão:** "
+            f"{personagem['profissao']}\n"
+
+            f"**Classe:** "
+            f"{personagem['classe']}"
         ),
         inline=False
     )
-
-    # =====================================================
-    # ATRIBUTOS
-    # =====================================================
 
     embed.add_field(
         name="⚔️ Atributos",
         value=(
             f"💪 **Força:** "
-            f"{formatar_numero(personagem['forca'])}\n"
+            f"{formatar_atributo(personagem['forca'])}\n"
 
             f"🛡️ **Resistência:** "
-            f"{formatar_numero(personagem['resistencia'])}\n"
+            f"{formatar_atributo(personagem['resistencia'])}\n"
 
             f"💨 **Velocidade/Agilidade:** "
-            f"{formatar_numero(personagem['velocidade'])}\n\n"
+            f"{formatar_atributo(personagem['velocidade'])}\n\n"
 
             f"✨ **Pontos disponíveis:** "
             f"{formatar_numero(personagem['pontos_atributo'])}"
         ),
         inline=False
     )
-
-    # =====================================================
-    # ESPECIALIZAÇÕES / DOMÍNIOS
-    # =====================================================
 
     if especializacoes:
 
@@ -136,7 +174,9 @@ async def criar_embed_ficha(membro, personagem):
             categorias.setdefault(
                 categoria,
                 []
-            ).append(item)
+            ).append(
+                item
+            )
 
         emojis_categoria = {
             "estilo": "🥋",
@@ -162,9 +202,12 @@ async def criar_embed_ficha(membro, personagem):
                     f"/{item['limite']}%"
                 )
 
-            texto = "\n".join(linhas)
+            texto = "\n".join(
+                linhas
+            )
 
             if len(texto) > 1024:
+
                 texto = (
                     texto[:1000]
                     + "\n..."
@@ -195,10 +238,6 @@ async def criar_embed_ficha(membro, personagem):
             inline=False
         )
 
-    # =====================================================
-    # PONTOS DE DOMÍNIO
-    # =====================================================
-
     embed.add_field(
         name="📈 Pontos de Domínio",
         value=(
@@ -207,10 +246,6 @@ async def criar_embed_ficha(membro, personagem):
         ),
         inline=False
     )
-
-    # =====================================================
-    # ECONOMIA
-    # =====================================================
 
     embed.add_field(
         name="💰 Berries",
@@ -245,9 +280,13 @@ async def criar_embed_ficha(membro, personagem):
 # CALLBACK — CONFIRMAR CRIAÇÃO
 # =========================================================
 
-async def confirmar_criacao(interaction):
+async def confirmar_criacao(
+    interaction
+):
 
-    user_id = interaction.user.id
+    user_id = (
+        interaction.user.id
+    )
 
     dados = criando.get(
         user_id
@@ -259,13 +298,12 @@ async def confirmar_criacao(interaction):
             "❌ Sua criação não está mais ativa.",
             ephemeral=True
         )
+
         return
 
-    # =====================================================
-    # PROTEÇÃO CONTRA DUPLICAÇÃO
-    # =====================================================
-
-    if await possui_ficha(user_id):
+    if await possui_ficha(
+        user_id
+    ):
 
         criando.pop(
             user_id,
@@ -281,10 +319,6 @@ async def confirmar_criacao(interaction):
         )
 
         return
-
-    # =====================================================
-    # SALVAR NO POSTGRESQL
-    # =====================================================
 
     try:
 
@@ -320,26 +354,14 @@ async def confirmar_criacao(interaction):
 
         return
 
-    # =====================================================
-    # BUSCAR PERSONAGEM SALVO
-    # =====================================================
-
     personagem = await buscar_ficha(
         user_id
     )
-
-    # =====================================================
-    # ENCERRAR RASCUNHO
-    # =====================================================
 
     criando.pop(
         user_id,
         None
     )
-
-    # =====================================================
-    # MOSTRAR FICHA FINAL
-    # =====================================================
 
     if personagem:
 
@@ -401,6 +423,7 @@ class EditarNomeModal(
                 "❌ Ficha não encontrada.",
                 ephemeral=True
             )
+
             return
 
         await interaction.response.edit_message(
@@ -500,7 +523,7 @@ class EditarFichaView(
 
 
 # =========================================================
-# VOLTAR PARA PAINEL DE EDIÇÃO
+# VOLTAR PARA EDIÇÃO
 # =========================================================
 
 async def voltar_edicao(
@@ -551,6 +574,7 @@ async def abrir_atributos(
             "❌ Você ainda não possui ficha.",
             ephemeral=True
         )
+
         return
 
     dados = {
@@ -599,20 +623,24 @@ async def salvar_dominios(
         []
     ):
 
-        especializacao_id = dominio.get(
-            "id"
+        especializacao_id = (
+            dominio.get("id")
         )
 
         if especializacao_id not in atuais:
             continue
 
-        porcentagem_banco = atuais[
-            especializacao_id
-        ]["porcentagem"]
+        porcentagem_banco = (
+            atuais[
+                especializacao_id
+            ]["porcentagem"]
+        )
 
-        porcentagem_nova = dominio.get(
-            "porcentagem",
-            0
+        porcentagem_nova = (
+            dominio.get(
+                "porcentagem",
+                0
+            )
         )
 
         diferenca = (
@@ -682,6 +710,7 @@ async def abrir_dominios(
             "❌ Você ainda não possui ficha.",
             ephemeral=True
         )
+
         return
 
     especializacoes = list(
@@ -690,8 +719,10 @@ async def abrir_dominios(
         )
     )
 
-    pontos = await buscar_pontos_percentuais(
-        interaction.user.id
+    pontos = (
+        await buscar_pontos_percentuais(
+            interaction.user.id
+        )
     )
 
     dados = montar_dados_dominios(
@@ -782,8 +813,10 @@ class Personagem(
             or ctx.author
         )
 
-        personagem = await buscar_ficha(
-            membro.id
+        personagem = (
+            await buscar_ficha(
+                membro.id
+            )
         )
 
         if not personagem:
@@ -813,8 +846,10 @@ class Personagem(
         ctx
     ):
 
-        personagem = await buscar_ficha(
-            ctx.author.id
+        personagem = (
+            await buscar_ficha(
+                ctx.author.id
+            )
         )
 
         if not personagem:
@@ -851,8 +886,10 @@ class Personagem(
         ctx
     ):
 
-        ficha = await buscar_ficha(
-            ctx.author.id
+        ficha = (
+            await buscar_ficha(
+                ctx.author.id
+            )
         )
 
         if not ficha:
@@ -915,8 +952,10 @@ class Personagem(
             )
         )
 
-        pontos = await buscar_pontos_percentuais(
-            ctx.author.id
+        pontos = (
+            await buscar_pontos_percentuais(
+                ctx.author.id
+            )
         )
 
         dados = montar_dados_dominios(
@@ -939,8 +978,8 @@ class Personagem(
 
 
     # =====================================================
-    # !RESETARFICHA
-    # SOMENTE ADMIN
+        # !RESETARFICHA
+    # ADMIN
     # =====================================================
 
     @commands.command()
@@ -958,8 +997,10 @@ class Personagem(
             or ctx.author
         )
 
-        resultado = await deletar_ficha(
-            membro.id
+        resultado = (
+            await deletar_ficha(
+                membro.id
+            )
         )
 
         criando.pop(
