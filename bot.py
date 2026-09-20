@@ -1,9 +1,13 @@
 import os
 import asyncio
 import discord
+
 from discord.ext import commands
 
-from database.database import conectar_banco, fechar_banco
+from database.database import (
+    conectar_banco,
+    fechar_banco
+)
 
 
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -25,6 +29,7 @@ intents.members = True
 class SeasParadiseBot(commands.Bot):
 
     def __init__(self):
+
         super().__init__(
             command_prefix="!",
             intents=intents,
@@ -35,44 +40,130 @@ class SeasParadiseBot(commands.Bot):
 
         print("⚙️ Iniciando Sea's Paradise...")
 
-        # Banco de dados
-        await conectar_banco()
+        # =================================================
+        # BANCO DE DADOS
+        # =================================================
 
-        # Cogs
+        try:
+
+            await conectar_banco()
+
+            print("🐘 PostgreSQL conectado.")
+
+        except Exception as erro:
+
+            print(
+                "❌ Erro ao conectar ao banco:"
+            )
+
+            print(
+                f"{type(erro).__name__}: {erro}"
+            )
+
+            raise
+
+        # =================================================
+        # COGS
+        # =================================================
+
         extensoes = [
-    "cogs.personagem",
-    "cogs.admin",
+            "cogs.personagem",
+            "cogs.admin"
         ]
 
         for extensao in extensoes:
+
             try:
-                await self.load_extension(extensao)
-                print(f"✅ {extensao} carregado.")
+
+                await self.load_extension(
+                    extensao
+                )
+
+                print(
+                    f"✅ {extensao} carregado."
+                )
+
             except Exception as erro:
-                print(f"❌ Erro ao carregar {extensao}: {erro}")
+
+                print(
+                    f"❌ Erro ao carregar "
+                    f"{extensao}:"
+                )
+
+                print(
+                    f"{type(erro).__name__}: "
+                    f"{erro}"
+                )
+
                 raise
 
     async def close(self):
-        await fechar_banco()
+
+        print(
+            "🔌 Encerrando Sea's Paradise..."
+        )
+
+        try:
+
+            await fechar_banco()
+
+            print(
+                "🐘 PostgreSQL desconectado."
+            )
+
+        except Exception as erro:
+
+            print(
+                "⚠️ Erro ao fechar banco:"
+            )
+
+            print(
+                f"{type(erro).__name__}: "
+                f"{erro}"
+            )
+
         await super().close()
 
+
+# =========================================================
+# INSTÂNCIA
+# =========================================================
 
 bot = SeasParadiseBot()
 
 
 # =========================================================
-# ONLINE
+# BOT ONLINE
 # =========================================================
 
 @bot.event
 async def on_ready():
 
-    print("=" * 45)
+    print()
+    print("=" * 50)
     print("🏴‍☠️ SEA'S PARADISE ONLINE")
-    print(f"🤖 Bot: {bot.user}")
-    print(f"🆔 ID: {bot.user.id}")
-    print(f"🌊 Servidores: {len(bot.guilds)}")
-    print("=" * 45)
+    print("=" * 50)
+
+    print(
+        f"🤖 Bot: {bot.user}"
+    )
+
+    print(
+        f"🆔 ID: {bot.user.id}"
+    )
+
+    print(
+        f"🌊 Servidores: "
+        f"{len(bot.guilds)}"
+    )
+
+    print(
+        f"📜 Comandos carregados: "
+        f"{len(bot.commands)}"
+    )
+
+    print("=" * 50)
+    print()
 
 
 # =========================================================
@@ -80,43 +171,163 @@ async def on_ready():
 # =========================================================
 
 @bot.event
-async def on_command_error(ctx, error):
+async def on_command_error(
+    ctx,
+    error
+):
 
-    if isinstance(error, commands.CommandNotFound):
+    # =====================================================
+    # COMANDO NÃO EXISTE
+    # =====================================================
+
+    if isinstance(
+        error,
+        commands.CommandNotFound
+    ):
+
         return
 
-    if isinstance(error, commands.MissingPermissions):
+    # =====================================================
+    # SEM PERMISSÃO
+    # =====================================================
+
+    if isinstance(
+        error,
+        commands.MissingPermissions
+    ):
+
         await ctx.send(
-            "❌ Você não possui permissão para usar esse comando."
+            "❌ Você não possui permissão "
+            "para usar esse comando."
         )
+
         return
 
-    if isinstance(error, commands.MemberNotFound):
+    # =====================================================
+    # USUÁRIO NÃO ENCONTRADO
+    # =====================================================
+
+    if isinstance(
+        error,
+        commands.MemberNotFound
+    ):
+
         await ctx.send(
             "❌ Não encontrei esse usuário."
         )
+
         return
 
+    # =====================================================
+    # ARGUMENTO FALTANDO
+    # =====================================================
+
+    if isinstance(
+        error,
+        commands.MissingRequiredArgument
+    ):
+
+        await ctx.send(
+            "❌ Está faltando uma informação "
+            "nesse comando."
+        )
+
+        return
+
+    # =====================================================
+    # ARGUMENTO INVÁLIDO
+    # =====================================================
+
+    if isinstance(
+        error,
+        commands.BadArgument
+    ):
+
+        await ctx.send(
+            "❌ Alguma informação enviada "
+            "nesse comando é inválida."
+        )
+
+        return
+
+    # =====================================================
+    # ERRO INTERNO DO COMANDO
+    # =====================================================
+
+    erro_original = getattr(
+        error,
+        "original",
+        error
+    )
+
+    print()
+    print("=" * 50)
+
     print(
-        f"❌ Erro no comando "
-        f"{ctx.command}: {type(error).__name__}: {error}"
+        f"❌ ERRO NO COMANDO: "
+        f"{ctx.command}"
+    )
+
+    print(
+        f"Tipo: "
+        f"{type(erro_original).__name__}"
+    )
+
+    print(
+        f"Erro: "
+        f"{erro_original}"
+    )
+
+    print("=" * 50)
+    print()
+
+    await ctx.send(
+        "⚠️ Ocorreu um erro interno "
+        "ao executar esse comando."
     )
 
 
 # =========================================================
-# INICIAR
+# INICIAR BOT
 # =========================================================
 
 async def main():
 
+    # =====================================================
+    # TOKEN
+    # =====================================================
+
     if not TOKEN:
+
         raise RuntimeError(
             "DISCORD_TOKEN não foi configurado."
         )
 
-    async with bot:
-        await bot.start(TOKEN)
+    # =====================================================
+    # EXECUTAR
+    # =====================================================
 
+    async with bot:
+
+        await bot.start(
+            TOKEN
+        )
+
+
+# =========================================================
+# START
+# =========================================================
 
 if __name__ == "__main__":
-    asyncio.run(main())
+
+    try:
+
+        asyncio.run(
+            main()
+        )
+
+    except KeyboardInterrupt:
+
+        print(
+            "\n🛑 Sea's Paradise encerrado."
+        )
