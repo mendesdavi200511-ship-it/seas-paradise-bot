@@ -10,7 +10,7 @@ from data.classes import CLASSES
 # CONFIGURAÇÕES
 # =========================================================
 
-PONTOS_INICIAIS = 100
+PONTOS_INICIAIS = 30
 ATRIBUTO_MAXIMO = 50000
 
 criando = {}
