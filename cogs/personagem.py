@@ -965,4 +965,588 @@ async def abrir_painel_dominios(
 
     await interaction.response.edit_message(
         embed=(
-            await view
+            await view.gerar_embed(
+                interaction.user
+            )
+        ),
+        view=view
+    )
+
+
+# =========================================================
+# COG
+# =========================================================
+
+class Personagem(
+    commands.Cog
+):
+
+    def __init__(
+        self,
+        bot
+    ):
+
+        self.bot = bot
+
+
+    # =====================================================
+    # CONFIRMAR CRIAÇÃO
+    # =====================================================
+
+    async def confirmar_criacao(
+        self,
+        interaction
+    ):
+
+        user_id = (
+            interaction.user.id
+        )
+
+        dados = criando.get(
+            user_id
+        )
+
+        if not dados:
+
+            await interaction.response.send_message(
+                "❌ Sua criação expirou. "
+                "Use `!criar` novamente.",
+                ephemeral=True
+            )
+
+            return
+
+        if not dados["nome"]:
+
+            await interaction.response.send_message(
+                "❌ Defina o nome "
+                "do personagem.",
+                ephemeral=True
+            )
+
+            return
+
+        if dados["raca"] == "Não definida":
+
+            await interaction.response.send_message(
+                "❌ Escolha sua raça.",
+                ephemeral=True
+            )
+
+            return
+
+        if dados["familia"] == "Não definida":
+
+            await interaction.response.send_message(
+                "❌ Escolha sua família.",
+                ephemeral=True
+            )
+
+            return
+
+        if dados["profissao"] == "Nenhuma":
+
+            await interaction.response.send_message(
+                "❌ Escolha sua profissão.",
+                ephemeral=True
+            )
+
+            return
+
+        if dados["classe"] == "Nenhuma":
+
+            await interaction.response.send_message(
+                "❌ Escolha sua classe.",
+                ephemeral=True
+            )
+
+            return
+
+        if dados["pontos"] > 0:
+
+            await interaction.response.send_message(
+                f"❌ Você ainda possui "
+                f"**{formatar_numero(dados['pontos'])}** "
+                "pontos para distribuir.",
+                ephemeral=True
+            )
+
+            return
+
+        if await possui_ficha(
+            user_id
+        ):
+
+            await interaction.response.send_message(
+                "❌ Você já possui uma ficha.",
+                ephemeral=True
+            )
+
+            return
+
+        try:
+
+            await criar_ficha(
+                user_id=user_id,
+                nome=dados["nome"],
+                raca=dados["raca"],
+                familia=dados["familia"],
+                faccao=dados["faccao"],
+                profissao=dados["profissao"],
+                classe=dados["classe"],
+                forca=dados["forca"],
+                resistencia=dados["resistencia"],
+                velocidade=dados["velocidade"],
+                pontos_atributo=0
+            )
+
+        except Exception as erro:
+
+            print(
+                "❌ ERRO AO CRIAR FICHA:",
+                repr(erro)
+            )
+
+            await interaction.response.send_message(
+                "❌ Ocorreu um erro "
+                "ao salvar a ficha.",
+                ephemeral=True
+            )
+
+            return
+
+        nome = dados["nome"]
+
+        criando.pop(
+            user_id,
+            None
+        )
+
+        embed = discord.Embed(
+            title="🏴‍☠️ PERSONAGEM CRIADO!",
+            description=(
+                f"**{nome}** entrou oficialmente "
+                "no mundo de **Sea's Paradise**."
+            )
+        )
+
+        embed.add_field(
+            name="📜 Próximo passo",
+            value=(
+                "Use `!ficha` para visualizar "
+                "seu personagem."
+            ),
+            inline=False
+        )
+
+        await interaction.response.edit_message(
+            embed=embed,
+            view=None
+        )
+
+
+    #
+    =====================================================
+    # CONFIRMAR CRIAÇÃO
+    # =====================================================
+
+    async def confirmar_criacao(
+        self,
+        interaction
+    ):
+
+        user_id = (
+            interaction.user.id
+        )
+
+        dados = criando.get(
+            user_id
+        )
+
+        if not dados:
+
+            await interaction.response.send_message(
+                "❌ Sua criação expirou. "
+                "Use `!criar` novamente.",
+                ephemeral=True
+            )
+
+            return
+
+        if not dados["nome"]:
+
+            await interaction.response.send_message(
+                "❌ Defina o nome "
+                "do personagem.",
+                ephemeral=True
+            )
+
+            return
+
+        if dados["raca"] == "Não definida":
+
+            await interaction.response.send_message(
+                "❌ Escolha sua raça.",
+                ephemeral=True
+            )
+
+            return
+
+        if dados["familia"] == "Não definida":
+
+            await interaction.response.send_message(
+                "❌ Escolha sua família.",
+                ephemeral=True
+            )
+
+            return
+
+        if dados["profissao"] == "Nenhuma":
+
+            await interaction.response.send_message(
+                "❌ Escolha sua profissão.",
+                ephemeral=True
+            )
+
+            return
+
+        if dados["classe"] == "Nenhuma":
+
+            await interaction.response.send_message(
+                "❌ Escolha sua classe.",
+                ephemeral=True
+            )
+
+            return
+
+        if dados["pontos"] > 0:
+
+            await interaction.response.send_message(
+                f"❌ Você ainda possui "
+                f"**{formatar_numero(dados['pontos'])}** "
+                "pontos para distribuir.",
+                ephemeral=True
+            )
+
+            return
+
+        if await possui_ficha(
+            user_id
+        ):
+
+            await interaction.response.send_message(
+                "❌ Você já possui uma ficha.",
+                ephemeral=True
+            )
+
+            return
+
+        try:
+
+            await criar_ficha(
+                user_id=user_id,
+                nome=dados["nome"],
+                raca=dados["raca"],
+                familia=dados["familia"],
+                faccao=dados["faccao"],
+                profissao=dados["profissao"],
+                classe=dados["classe"],
+                forca=dados["forca"],
+                resistencia=dados["resistencia"],
+                velocidade=dados["velocidade"],
+                pontos_atributo=0
+            )
+
+        except Exception as erro:
+
+            print(
+                "❌ ERRO AO CRIAR FICHA:",
+                repr(erro)
+            )
+
+            await interaction.response.send_message(
+                "❌ Ocorreu um erro "
+                "ao salvar a ficha.",
+                ephemeral=True
+            )
+
+            return
+
+        nome = dados["nome"]
+
+        criando.pop(
+            user_id,
+            None
+        )
+
+        embed = discord.Embed(
+            title="🏴‍☠️ PERSONAGEM CRIADO!",
+            description=(
+                f"**{nome}** entrou oficialmente "
+                "no mundo de **Sea's Paradise**."
+            )
+        )
+
+        embed.add_field(
+            name="📜 Próximo passo",
+            value=(
+                "Use `!ficha` para visualizar "
+                "seu personagem."
+            ),
+            inline=False
+        )
+
+        await interaction.response.edit_message(
+            embed=embed,
+            view=None
+        )
+
+
+    # =====================================================
+    # !CRIAR
+    # =====================================================
+
+    @commands.command()
+    async def criar(
+        self,
+        ctx
+    ):
+
+        if await possui_ficha(
+            ctx.author.id
+        ):
+
+            await ctx.send(
+                "❌ Você já possui personagem.\n"
+                "Use `!ficha` para visualizar."
+            )
+
+            return
+
+        criando[ctx.author.id] = (
+            novo_rascunho()
+        )
+
+        await ctx.send(
+            embed=criar_embed(
+                ctx.author
+            ),
+            view=CriacaoView(
+                ctx.author.id,
+                self.confirmar_criacao
+            )
+        )
+
+
+    # =====================================================
+    # !FICHA
+    # =====================================================
+
+    @commands.command()
+    async def ficha(
+        self,
+        ctx,
+        membro: discord.Member = None
+    ):
+
+        membro = (
+            membro
+            or ctx.author
+        )
+
+        personagem = await buscar_ficha(
+            membro.id
+        )
+
+        if not personagem:
+
+            await ctx.send(
+                f"❌ {membro.mention} "
+                "não possui personagem."
+            )
+
+            return
+
+        embed = await criar_embed_ficha(
+            membro,
+            personagem
+        )
+
+        await ctx.send(
+            embed=embed
+        )
+
+
+    # =====================================================
+    # !EDITAR
+    # =====================================================
+
+    @commands.command()
+    async def editar(
+        self,
+        ctx
+    ):
+
+        if not await possui_ficha(
+            ctx.author.id
+        ):
+
+            await ctx.send(
+                "❌ Você ainda não possui ficha."
+            )
+
+            return
+
+        embed = discord.Embed(
+            title="📝 EDITAR PERSONAGEM",
+            description=(
+                "Escolha o que deseja gerenciar.\n\n"
+                "Algumas informações especiais "
+                "só podem ser liberadas pela administração."
+            )
+        )
+
+        await ctx.send(
+            embed=embed,
+            view=EditarFichaView(
+                ctx.author.id
+            )
+        )
+
+
+    # =====================================================
+    # !ATRIBUTOS
+    # =====================================================
+
+    @commands.command()
+    async def atributos(
+        self,
+        ctx
+    ):
+
+        if not await possui_ficha(
+            ctx.author.id
+        ):
+
+            await ctx.send(
+                "❌ Você ainda não possui ficha."
+            )
+
+            return
+
+        view = AtributosView(
+            ctx.author.id
+        )
+
+        await ctx.send(
+            embed=(
+                await view.gerar_embed(
+                    ctx.author
+                )
+            ),
+            view=view
+        )
+
+
+    # =====================================================
+    # !DOMINIOS
+    # =====================================================
+
+    @commands.command(
+        aliases=[
+            "dominio",
+            "domínios",
+            "domínio"
+        ]
+    )
+    async def dominios(
+        self,
+        ctx
+    ):
+
+        if not await possui_ficha(
+            ctx.author.id
+        ):
+
+            await ctx.send(
+                "❌ Você ainda não possui ficha."
+            )
+
+            return
+
+        especializacoes = (
+            await buscar_especializacoes(
+                ctx.author.id
+            )
+        )
+
+        view = DominiosView(
+            ctx.author.id,
+            especializacoes
+        )
+
+        await ctx.send(
+            embed=(
+                await view.gerar_embed(
+                    ctx.author
+                )
+            ),
+            view=view
+        )
+
+
+    # =====================================================
+    # !RESETARFICHA
+    # ADMIN
+    # =====================================================
+
+    @commands.command()
+    @commands.has_permissions(
+        administrator=True
+    )
+    async def resetarficha(
+        self,
+        ctx,
+        membro: discord.Member = None
+    ):
+
+        membro = (
+            membro
+            or ctx.author
+        )
+
+        resultado = await deletar_ficha(
+            membro.id
+        )
+
+        criando.pop(
+            membro.id,
+            None
+        )
+
+        if resultado == "DELETE 0":
+
+            await ctx.send(
+                f"❌ {membro.mention} "
+                "não possui ficha."
+            )
+
+            return
+
+        await ctx.send(
+            f"🗑️ Ficha de "
+            f"{membro.mention} resetada."
+        )
+
+
+# =========================================================
+# SETUP
+# =========================================================
+
+async def setup(
+    bot
+):
+
+    await bot.add_cog(
+        Personagem(bot)
+        )
