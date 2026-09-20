@@ -14,7 +14,7 @@ from database.database import (
 )
 
 from data.classes import CLASSES
-from data.estilos import ESTILOS
+from data.skills import ESTILOS
 from data.profissoes import PROFISSOES
 
 
