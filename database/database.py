@@ -4,25 +4,27 @@ import asyncpg
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-pool = None
+_pool = None
 
 
 # =========================================================
 # CONEXÃO
 # =========================================================
 
-async def conectar():
-    global pool
+async def conectar_banco():
+    global _pool
 
-    if pool is not None:
-        return pool
+    if _pool is not None:
+        return _pool
 
     if not DATABASE_URL:
         raise RuntimeError(
             "DATABASE_URL não foi configurado."
         )
 
-    pool = await asyncpg.create_pool(
+    print("🐘 Conectando ao PostgreSQL...")
+
+    _pool = await asyncpg.create_pool(
         DATABASE_URL,
         min_size=1,
         max_size=5
@@ -33,7 +35,26 @@ async def conectar():
     print("🐘 PostgreSQL conectado!")
     print("📦 Banco do Sea's Paradise pronto!")
 
-    return pool
+    return _pool
+
+
+async def fechar_banco():
+    global _pool
+
+    if _pool is not None:
+        await _pool.close()
+        _pool = None
+
+        print("🔌 PostgreSQL desconectado.")
+
+
+def get_pool():
+    if _pool is None:
+        raise RuntimeError(
+            "O banco de dados ainda não foi conectado."
+        )
+
+    return _pool
 
 
 # =========================================================
@@ -42,10 +63,12 @@ async def conectar():
 
 async def criar_tabelas():
 
-    async with pool.acquire() as conn:
+    db = get_pool()
+
+    async with db.acquire() as conn:
 
         # -------------------------------------------------
-        # FICHA PRINCIPAL
+        # FICHAS
         # -------------------------------------------------
 
         await conn.execute("""
@@ -76,7 +99,7 @@ async def criar_tabelas():
                     DEFAULT 'Nenhuma',
 
                 despertar TEXT NOT NULL
-                    DEFAULT 'Nenhum',
+                    DEFAULT 'Não',
 
                 forca INTEGER NOT NULL
                     DEFAULT 0,
@@ -90,13 +113,13 @@ async def criar_tabelas():
                 pontos_atributo INTEGER NOT NULL
                     DEFAULT 0,
 
-                pontos_porcentagem INTEGER NOT NULL
+                pontos_percentuais INTEGER NOT NULL
                     DEFAULT 0,
 
                 berries BIGINT NOT NULL
                     DEFAULT 0,
 
-                reputacao INTEGER NOT NULL
+                reputacao BIGINT NOT NULL
                     DEFAULT 0,
 
                 criado_em TIMESTAMP
@@ -106,50 +129,58 @@ async def criar_tabelas():
 
         # -------------------------------------------------
         # MIGRAÇÕES
-        # Para banco antigo continuar funcionando
+        #
+        # Isso permite atualizar uma tabela antiga sem
+        # precisar apagar as fichas existentes.
         # -------------------------------------------------
 
-        await conn.execute("""
+        migracoes = [
+
+            """
             ALTER TABLE fichas
             ADD COLUMN IF NOT EXISTS familia TEXT
             NOT NULL DEFAULT 'Não definida';
-        """)
+            """,
 
-        await conn.execute("""
-            ALTER TABLE fichas
-            ADD COLUMN IF NOT EXISTS pontos_atributo INTEGER
-            NOT NULL DEFAULT 0;
-        """)
-
-        await conn.execute("""
+            """
             ALTER TABLE fichas
             ADD COLUMN IF NOT EXISTS estilo TEXT
             NOT NULL DEFAULT 'Nenhum';
-        """)
+            """,
 
-        await conn.execute("""
+            """
             ALTER TABLE fichas
             ADD COLUMN IF NOT EXISTS akuma TEXT
             NOT NULL DEFAULT 'Nenhuma';
-        """)
+            """,
 
-        await conn.execute("""
+            """
             ALTER TABLE fichas
             ADD COLUMN IF NOT EXISTS despertar TEXT
-            NOT NULL DEFAULT 'Nenhum';
-        """)
+            NOT NULL DEFAULT 'Não';
+            """,
 
-        await conn.execute("""
+            """
             ALTER TABLE fichas
-            ADD COLUMN IF NOT EXISTS pontos_porcentagem INTEGER
+            ADD COLUMN IF NOT EXISTS pontos_atributo INTEGER
             NOT NULL DEFAULT 0;
-        """)
+            """,
+
+            """
+            ALTER TABLE fichas
+            ADD COLUMN IF NOT EXISTS pontos_percentuais INTEGER
+            NOT NULL DEFAULT 0;
+            """
+        ]
+
+        for migracao in migracoes:
+            await conn.execute(migracao)
 
         # -------------------------------------------------
         # ESPECIALIZAÇÕES
         #
-        # Aqui ficam coisas que podem existir várias vezes:
-        # classes, estilos, haki, akuma, profissão etc.
+        # Aqui ficam estilos, Haki, profissão, Akuma etc.
+        # separadamente da ficha principal.
         # -------------------------------------------------
 
         await conn.execute("""
@@ -158,20 +189,44 @@ async def criar_tabelas():
 
                 user_id BIGINT NOT NULL,
 
-                tipo TEXT NOT NULL,
+                categoria TEXT NOT NULL,
 
                 nome TEXT NOT NULL,
 
                 porcentagem INTEGER NOT NULL
                     DEFAULT 0,
 
-                despertar BOOLEAN NOT NULL
-                    DEFAULT FALSE,
+                limite INTEGER NOT NULL
+                    DEFAULT 200,
+
+                desbloqueado_por TEXT NOT NULL
+                    DEFAULT 'admin',
 
                 criado_em TIMESTAMP
                     DEFAULT CURRENT_TIMESTAMP,
 
-                UNIQUE(user_id, tipo, nome)
+                UNIQUE(user_id, categoria, nome),
+
+                FOREIGN KEY (user_id)
+                    REFERENCES fichas(user_id)
+                    ON DELETE CASCADE
+            );
+        """)
+
+        # -------------------------------------------------
+        # PONTOS %
+        # -------------------------------------------------
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS pontos_percentuais (
+                user_id BIGINT PRIMARY KEY,
+
+                disponiveis INTEGER NOT NULL
+                    DEFAULT 0,
+
+                FOREIGN KEY (user_id)
+                    REFERENCES fichas(user_id)
+                    ON DELETE CASCADE
             );
         """)
 
@@ -182,110 +237,111 @@ async def criar_tabelas():
 
 async def possui_ficha(user_id):
 
-    async with pool.acquire() as conn:
+    db = get_pool()
 
-        resultado = await conn.fetchval(
-            """
-            SELECT EXISTS(
-                SELECT 1
-                FROM fichas
-                WHERE user_id = $1
-            )
-            """,
-            user_id
+    resultado = await db.fetchval(
+        """
+        SELECT EXISTS(
+            SELECT 1
+            FROM fichas
+            WHERE user_id = $1
         )
+        """,
+        user_id
+    )
 
     return resultado
 
 
 async def buscar_ficha(user_id):
 
-    async with pool.acquire() as conn:
+    db = get_pool()
 
-        return await conn.fetchrow(
-            """
-            SELECT *
-            FROM fichas
-            WHERE user_id = $1
-            """,
-            user_id
+    return await db.fetchrow(
+        """
+        SELECT *
+        FROM fichas
+        WHERE user_id = $1
+        """,
+        user_id
+    )
+
+
+async def criar_ficha(
+    user_id,
+    nome,
+    raca="Não definida",
+    familia="Não definida",
+    faccao="Civil",
+    profissao="Nenhuma",
+    classe="Nenhuma",
+    forca=0,
+    resistencia=0,
+    velocidade=0,
+    pontos_atributo=0
+):
+
+    db = get_pool()
+
+    await db.execute(
+        """
+        INSERT INTO fichas (
+            user_id,
+            nome,
+            raca,
+            familia,
+            faccao,
+            profissao,
+            classe,
+            forca,
+            resistencia,
+            velocidade,
+            pontos_atributo
         )
-
-
-async def criar_ficha(dados):
-
-    async with pool.acquire() as conn:
-
-        await conn.execute(
-            """
-            INSERT INTO fichas (
-                user_id,
-                nome,
-                raca,
-                familia,
-                faccao,
-                profissao,
-                classe,
-                estilo,
-                akuma,
-                despertar,
-                forca,
-                resistencia,
-                velocidade,
-                pontos_atributo,
-                pontos_porcentagem,
-                berries,
-                reputacao
-            )
-            VALUES (
-                $1, $2, $3, $4, $5,
-                $6, $7, $8, $9, $10,
-                $11, $12, $13, $14, $15,
-                $16, $17
-            )
-            """,
-
-            dados["user_id"],
-            dados["nome"],
-            dados.get("raca", "Não definida"),
-            dados.get("familia", "Não definida"),
-            dados.get("faccao", "Civil"),
-            dados.get("profissao", "Nenhuma"),
-            dados.get("classe", "Nenhuma"),
-            dados.get("estilo", "Nenhum"),
-            dados.get("akuma", "Nenhuma"),
-            dados.get("despertar", "Nenhum"),
-            dados.get("forca", 0),
-            dados.get("resistencia", 0),
-            dados.get("velocidade", 0),
-            dados.get("pontos_atributo", 0),
-            dados.get("pontos_porcentagem", 0),
-            dados.get("berries", 0),
-            dados.get("reputacao", 0)
+        VALUES (
+            $1, $2, $3, $4, $5,
+            $6, $7, $8, $9, $10, $11
         )
+        """,
+        user_id,
+        nome,
+        raca,
+        familia,
+        faccao,
+        profissao,
+        classe,
+        forca,
+        resistencia,
+        velocidade,
+        pontos_atributo
+    )
+
+    # Cria automaticamente a carteira de %
+    await db.execute(
+        """
+        INSERT INTO pontos_percentuais (
+            user_id,
+            disponiveis
+        )
+        VALUES ($1, 0)
+        ON CONFLICT (user_id)
+        DO NOTHING
+        """,
+        user_id
+    )
 
 
 async def deletar_ficha(user_id):
 
-    async with pool.acquire() as conn:
+    db = get_pool()
 
-        async with conn.transaction():
-
-            await conn.execute(
-                """
-                DELETE FROM especializacoes
-                WHERE user_id = $1
-                """,
-                user_id
-            )
-
-            return await conn.execute(
-                """
-                DELETE FROM fichas
-                WHERE user_id = $1
-                """,
-                user_id
-            )
+    return await db.execute(
+        """
+        DELETE FROM fichas
+        WHERE user_id = $1
+        """,
+        user_id
+    )
 
 
 # =========================================================
@@ -297,69 +353,73 @@ async def adicionar_pontos_atributo(
     quantidade
 ):
 
-    async with pool.acquire() as conn:
-
-        await conn.execute(
-            """
-            UPDATE fichas
-            SET pontos_atributo =
-                pontos_atributo + $1
-            WHERE user_id = $2
-            """,
-            quantidade,
-            user_id
+    if quantidade <= 0:
+        raise ValueError(
+            "A quantidade deve ser maior que zero."
         )
 
+    db = get_pool()
 
-async def atualizar_atributos(
-    user_id,
-    forca,
-    resistencia,
-    velocidade,
-    pontos
-):
-
-    async with pool.acquire() as conn:
-
-        await conn.execute(
-            """
-            UPDATE fichas
-            SET
-                forca = $1,
-                resistencia = $2,
-                velocidade = $3,
-                pontos_atributo = $4
-            WHERE user_id = $5
-            """,
-            forca,
-            resistencia,
-            velocidade,
-            pontos,
-            user_id
-        )
+    await db.execute(
+        """
+        UPDATE fichas
+        SET pontos_atributo =
+            pontos_atributo + $1
+        WHERE user_id = $2
+        """,
+        quantidade,
+        user_id
+    )
 
 
 # =========================================================
-# PONTOS DE PORCENTAGEM
+# PONTOS PERCENTUAIS
 # =========================================================
 
-async def adicionar_pontos_porcentagem(
+async def buscar_pontos_percentuais(user_id):
+
+    db = get_pool()
+
+    return await db.fetchval(
+        """
+        SELECT disponiveis
+        FROM pontos_percentuais
+        WHERE user_id = $1
+        """,
+        user_id
+    ) or 0
+
+
+async def adicionar_pontos_percentuais(
     user_id,
     quantidade
 ):
 
-    async with pool.acquire() as conn:
-
-        await conn.execute(
-            """
-            UPDATE fichas
-            SET pontos_porcentagem =
-                pontos_porcentagem + $1
-            WHERE user_id = $2
-            """,
-            quantidade,
-            user_id
+    if quantidade <= 0:
+        raise ValueError(
+            "A quantidade deve ser maior que zero."
         )
+
+    db = get_pool()
+
+    await db.execute(
+        """
+        INSERT INTO pontos_percentuais (
+            user_id,
+            disponiveis
+        )
+        VALUES ($1, $2)
+
+        ON CONFLICT (user_id)
+
+        DO UPDATE SET
+            disponiveis =
+                pontos_percentuais.disponiveis
+                + EXCLUDED.disponiveis
+        """,
+        user_id,
+        quantidade
+    )
 
 
 # =========================================================
@@ -368,145 +428,76 @@ async def adicionar_pontos_porcentagem(
 
 async def adicionar_especializacao(
     user_id,
-    tipo,
-    nome
+    categoria,
+    nome,
+    limite=200,
+    desbloqueado_por="admin"
 ):
 
-    async with pool.acquire() as conn:
+    db = get_pool()
 
-        await conn.execute(
-            """
-            INSERT INTO especializacoes (
-                user_id,
-                tipo,
-                nome
-            )
-
-            VALUES ($1, $2, $3)
-
-            ON CONFLICT (
-                user_id,
-                tipo,
-                nome
-            )
-
-            DO NOTHING
-            """,
+    await db.execute(
+        """
+        INSERT INTO especializacoes (
             user_id,
-            tipo,
+            categoria,
+            nome,
+            porcentagem,
+            limite,
+            desbloqueado_por
+        )
+        VALUES (
+            $1, $2, $3, 0, $4, $5
+        )
+
+        ON CONFLICT (
+            user_id,
+            categoria,
             nome
         )
 
-
-async def remover_especializacao(
-    user_id,
-    tipo,
-    nome
-):
-
-    async with pool.acquire() as conn:
-
-        await conn.execute(
-            """
-            DELETE FROM especializacoes
-
-            WHERE user_id = $1
-            AND tipo = $2
-            AND nome = $3
-            """,
-            user_id,
-            tipo,
-            nome
-        )
+        DO NOTHING
+        """,
+        user_id,
+        categoria,
+        nome,
+        limite,
+        desbloqueado_por
+    )
 
 
 async def buscar_especializacoes(user_id):
 
-    async with pool.acquire() as conn:
+    db = get_pool()
 
-        return await conn.fetch(
-            """
-            SELECT *
-            FROM especializacoes
-
-            WHERE user_id = $1
-
-            ORDER BY
-                tipo,
-                nome
-            """,
-            user_id
-        )
+    return await db.fetch(
+        """
+        SELECT *
+        FROM especializacoes
+        WHERE user_id = $1
+        ORDER BY categoria, nome
+        """,
+        user_id
+    )
 
 
-async def atualizar_porcentagem(
+async def remover_especializacao(
     user_id,
-    especializacao_id,
-    porcentagem
+    categoria,
+    nome
 ):
 
-    async with pool.acquire() as conn:
+    db = get_pool()
 
-        await conn.execute(
-            """
-            UPDATE especializacoes
+    return await db.execute(
+        """
+        DELETE FROM especializacoes
 
-            SET porcentagem = $1
-
-            WHERE id = $2
-            AND user_id = $3
-            """,
-            porcentagem,
-            especializacao_id,
-            user_id
-        )
-
-
-# =========================================================
-# ECONOMIA
-# =========================================================
-
-async def alterar_berries(
-    user_id,
-    quantidade
-):
-
-    async with pool.acquire() as conn:
-
-        await conn.execute(
-            """
-            UPDATE fichas
-
-            SET berries =
-                berries + $1
-
-            WHERE user_id = $2
-            """,
-            quantidade,
-            user_id
-        )
-
-
-# =========================================================
-# REPUTAÇÃO
-# =========================================================
-
-async def alterar_reputacao(
-    user_id,
-    quantidade
-):
-
-    async with pool.acquire() as conn:
-
-        await conn.execute(
-            """
-            UPDATE fichas
-
-            SET reputacao =
-                reputacao + $1
-
-            WHERE user_id = $2
-            """,
-            quantidade,
-            user_id
-        )
+        WHERE user_id = $1
+        AND categoria = $2
+        AND nome = $3
+        """,
+        user_id,
+        categoria,
+        nome
+    )
