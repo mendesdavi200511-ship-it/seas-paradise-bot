@@ -17,10 +17,54 @@ criando = {}
 
 
 # =========================================================
+# ESCALA DE ATRIBUTOS
+# =========================================================
+
+ESCALA_ATRIBUTOS = [
+    (50000, "Lendário"),
+    (25000, "Titânico"),
+    (10000, "Sobre-Humano"),
+    (5000, "Monstruoso"),
+    (2000, "Excepcional"),
+    (1000, "Muito Forte"),
+    (600, "Forte"),
+    (350, "Bom"),
+    (200, "Mediano"),
+    (100, "Normal"),
+    (50, "Fraco"),
+    (20, "Muito Fraco"),
+]
+
+
+def nivel_atributo(valor):
+
+    for minimo, nome in ESCALA_ATRIBUTOS:
+
+        if valor >= minimo:
+            return nome
+
+    return "Muito Fraco"
+
+
+def formatar_numero(valor):
+
+    return f"{valor:,}".replace(",", ".")
+
+
+def formatar_atributo(valor):
+
+    return (
+        f"{formatar_numero(valor)} — "
+        f"**{nivel_atributo(valor)}**"
+    )
+
+
+# =========================================================
 # RASCUNHO
 # =========================================================
 
 def novo_rascunho():
+
     return {
         "nome": None,
 
@@ -44,12 +88,17 @@ def novo_rascunho():
 
 def criar_embed(usuario):
 
-    dados = criando.get(usuario.id)
+    dados = criando.get(
+        usuario.id
+    )
 
     if not dados:
+
         return discord.Embed(
             title="❌ Criação encerrada",
-            description="Use `!criar` para começar novamente."
+            description=(
+                "Use `!criar` para começar novamente."
+            )
         )
 
     embed = discord.Embed(
@@ -98,22 +147,25 @@ def criar_embed(usuario):
         name="⚔️ Atributos",
         value=(
             f"💪 **Força:** "
-            f"{dados['forca']:,}\n"
+            f"{formatar_atributo(dados['forca'])}\n"
 
             f"🛡️ **Resistência:** "
-            f"{dados['resistencia']:,}\n"
+            f"{formatar_atributo(dados['resistencia'])}\n"
 
             f"💨 **Velocidade/Agilidade:** "
-            f"{dados['velocidade']:,}\n\n"
+            f"{formatar_atributo(dados['velocidade'])}\n\n"
 
             f"✨ **Pontos disponíveis:** "
-            f"{dados['pontos']:,}"
+            f"{formatar_numero(dados['pontos'])}"
         ),
         inline=False
     )
 
     embed.set_footer(
-        text="Sea's Paradise • Criação de Personagem"
+        text=(
+            "Sea's Paradise • "
+            "Criação de Personagem"
+        )
     )
 
     return embed
@@ -123,14 +175,19 @@ def criar_embed(usuario):
 # BASE DAS VIEWS
 # =========================================================
 
-class ViewDoJogador(discord.ui.View):
+class ViewDoJogador(
+    discord.ui.View
+):
 
     def __init__(
         self,
         dono_id,
         confirmar_callback
     ):
-        super().__init__(timeout=600)
+
+        super().__init__(
+            timeout=600
+        )
 
         self.dono_id = dono_id
         self.confirmar_callback = confirmar_callback
@@ -143,7 +200,8 @@ class ViewDoJogador(discord.ui.View):
         if interaction.user.id != self.dono_id:
 
             await interaction.response.send_message(
-                "❌ Esse painel pertence a outro jogador.",
+                "❌ Esse painel pertence "
+                "a outro jogador.",
                 ephemeral=True
             )
 
@@ -163,7 +221,9 @@ class ViewDoJogador(discord.ui.View):
 # NOME
 # =========================================================
 
-class NomeModal(discord.ui.Modal):
+class NomeModal(
+    discord.ui.Modal
+):
 
     def __init__(
         self,
@@ -183,7 +243,9 @@ class NomeModal(discord.ui.Modal):
             max_length=40
         )
 
-        self.add_item(self.nome)
+        self.add_item(
+            self.nome
+        )
 
     async def on_submit(
         self,
@@ -222,7 +284,9 @@ class NomeModal(discord.ui.Modal):
 # CATÁLOGO GENÉRICO
 # =========================================================
 
-class CatalogoSelect(discord.ui.Select):
+class CatalogoSelect(
+    discord.ui.Select
+):
 
     def __init__(
         self,
@@ -235,8 +299,6 @@ class CatalogoSelect(discord.ui.Select):
 
         opcoes = []
 
-        # Discord permite no máximo
-        # 25 opções por Select.
         for nome, dados in list(
             catalogo.items()
         )[:25]:
@@ -244,7 +306,10 @@ class CatalogoSelect(discord.ui.Select):
             emoji = None
             descricao = None
 
-            if isinstance(dados, dict):
+            if isinstance(
+                dados,
+                dict
+            ):
 
                 emoji = dados.get(
                     "emoji"
@@ -296,9 +361,9 @@ class CatalogoSelect(discord.ui.Select):
 
             return
 
-        dados[self.campo] = (
-            self.values[0]
-        )
+        dados[
+            self.campo
+        ] = self.values[0]
 
         view = self.view
 
@@ -310,7 +375,9 @@ class CatalogoSelect(discord.ui.Select):
         )
 
 
-class CatalogoView(ViewDoJogador):
+class CatalogoView(
+    ViewDoJogador
+):
 
     def __init__(
         self,
@@ -366,9 +433,13 @@ FACCOES = {
 }
 
 
-class FaccaoSelect(discord.ui.Select):
+class FaccaoSelect(
+    discord.ui.Select
+):
 
-    def __init__(self):
+    def __init__(
+        self
+    ):
 
         opcoes = [
             discord.SelectOption(
@@ -381,7 +452,9 @@ class FaccaoSelect(discord.ui.Select):
         ]
 
         super().__init__(
-            placeholder="Escolha sua facção...",
+            placeholder=(
+                "Escolha sua facção..."
+            ),
             options=opcoes,
             row=0
         )
@@ -418,7 +491,9 @@ class FaccaoSelect(discord.ui.Select):
         )
 
 
-class FaccaoView(ViewDoJogador):
+class FaccaoView(
+    ViewDoJogador
+):
 
     def __init__(
         self,
@@ -463,7 +538,9 @@ class CriacaoAtributoSelect(
     discord.ui.Select
 ):
 
-    def __init__(self):
+    def __init__(
+        self
+    ):
 
         super().__init__(
             placeholder=(
@@ -475,13 +552,11 @@ class CriacaoAtributoSelect(
                     value="forca",
                     emoji="💪"
                 ),
-
                 discord.SelectOption(
                     label="Resistência",
                     value="resistencia",
                     emoji="🛡️"
                 ),
-
                 discord.SelectOption(
                     label="Velocidade/Agilidade",
                     value="velocidade",
@@ -586,13 +661,13 @@ class CriacaoQuantidadeButton(
 
             return
 
-        dados[atributo] += (
-            self.quantidade
-        )
+        dados[
+            atributo
+        ] += self.quantidade
 
-        dados["pontos"] -= (
-            self.quantidade
-        )
+        dados[
+            "pontos"
+        ] -= self.quantidade
 
         await interaction.response.edit_message(
             embed=criar_embed(
@@ -630,9 +705,9 @@ class CriacaoAtributosView(
         for quantidade in (
             1,
             5,
-            50,
-            100,
-            300
+            10,
+            20,
+            30
         ):
 
             self.add_item(
@@ -672,9 +747,9 @@ class CriacaoAtributosView(
             + dados["velocidade"]
         )
 
-        dados["pontos"] += (
-            total_distribuido
-        )
+        dados[
+            "pontos"
+        ] += total_distribuido
 
         dados["forca"] = 0
         dados["resistencia"] = 0
@@ -714,7 +789,9 @@ class CriacaoAtributosView(
 # PAINEL PRINCIPAL
 # =========================================================
 
-class CriacaoView(ViewDoJogador):
+class CriacaoView(
+    ViewDoJogador
+):
 
     def __init__(
         self,
@@ -726,10 +803,6 @@ class CriacaoView(ViewDoJogador):
             dono_id,
             confirmar_callback
         )
-
-    # -----------------------------------------------------
-    # NOME
-    # -----------------------------------------------------
 
     @discord.ui.button(
         label="Nome",
@@ -748,10 +821,6 @@ class CriacaoView(ViewDoJogador):
                 self.confirmar_callback
             )
         )
-
-    # -----------------------------------------------------
-    # RAÇA
-    # -----------------------------------------------------
 
     @discord.ui.button(
         label="Raça",
@@ -778,10 +847,6 @@ class CriacaoView(ViewDoJogador):
             )
         )
 
-    # -----------------------------------------------------
-    # FAMÍLIA
-    # -----------------------------------------------------
-
     @discord.ui.button(
         label="Família",
         emoji="🩸",
@@ -807,10 +872,6 @@ class CriacaoView(ViewDoJogador):
             )
         )
 
-    # -----------------------------------------------------
-    # FACÇÃO
-    # -----------------------------------------------------
-
     @discord.ui.button(
         label="Facção",
         emoji="🌊",
@@ -832,10 +893,6 @@ class CriacaoView(ViewDoJogador):
                 self.confirmar_callback
             )
         )
-
-    # -----------------------------------------------------
-    # PROFISSÃO
-    # -----------------------------------------------------
 
     @discord.ui.button(
         label="Profissão",
@@ -862,10 +919,6 @@ class CriacaoView(ViewDoJogador):
             )
         )
 
-    # -----------------------------------------------------
-    # CLASSE
-    # -----------------------------------------------------
-
     @discord.ui.button(
         label="Classe",
         emoji="⚔️",
@@ -891,10 +944,6 @@ class CriacaoView(ViewDoJogador):
             )
         )
 
-    # -----------------------------------------------------
-    # ATRIBUTOS
-    # -----------------------------------------------------
-
     @discord.ui.button(
         label="Atributos",
         emoji="✨",
@@ -917,11 +966,6 @@ class CriacaoView(ViewDoJogador):
             )
         )
 
-    # -----------------------------------------------------
-    # -----------------------------------------------------
-    # CONFIRMAR
-    # -----------------------------------------------------
-
     @discord.ui.button(
         label="Confirmar Personagem",
         emoji="✅",
@@ -940,6 +984,7 @@ class CriacaoView(ViewDoJogador):
                 "❌ A confirmação não está disponível.",
                 ephemeral=True
             )
+
             return
 
         dados = criando.get(
@@ -952,50 +997,57 @@ class CriacaoView(ViewDoJogador):
                 "❌ Sua criação não está mais ativa.",
                 ephemeral=True
             )
-            return
 
-        # =================================================
-        # VALIDAÇÕES
-        # =================================================
+            return
 
         if not dados["nome"]:
 
             await interaction.response.send_message(
-                "❌ Defina o **nome** do personagem antes de confirmar.",
+                "❌ Defina o **nome** do personagem "
+                "antes de confirmar.",
                 ephemeral=True
             )
+
             return
 
         if dados["raca"] == "Não definida":
 
             await interaction.response.send_message(
-                "❌ Escolha uma **raça** antes de confirmar.",
+                "❌ Escolha uma **raça** "
+                "antes de confirmar.",
                 ephemeral=True
             )
+
             return
 
         if dados["familia"] == "Não definida":
 
             await interaction.response.send_message(
-                "❌ Escolha uma **família** antes de confirmar.",
+                "❌ Escolha uma **família** "
+                "antes de confirmar.",
                 ephemeral=True
             )
+
             return
 
         if dados["profissao"] == "Nenhuma":
 
             await interaction.response.send_message(
-                "❌ Escolha uma **profissão** antes de confirmar.",
+                "❌ Escolha uma **profissão** "
+                "antes de confirmar.",
                 ephemeral=True
             )
+
             return
 
         if dados["classe"] == "Nenhuma":
 
             await interaction.response.send_message(
-                "❌ Escolha uma **classe** antes de confirmar.",
+                "❌ Escolha uma **classe** "
+                "antes de confirmar.",
                 ephemeral=True
             )
+
             return
 
         if dados["pontos"] > 0:
@@ -1008,12 +1060,9 @@ class CriacaoView(ViewDoJogador):
                 ),
                 ephemeral=True
             )
-            return
 
-        # =================================================
-        # CALLBACK PARA SALVAR PERSONAGEM
-        # =================================================
+            return
 
         await self.confirmar_callback(
             interaction
-        )
+            )
