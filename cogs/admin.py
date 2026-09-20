@@ -13,6 +13,30 @@ from database.database import (
     buscar_especializacoes,
 )
 
+from data.classes import CLASSES
+from data.estilos import ESTILOS
+from data.profissoes import PROFISSOES
+
+
+# =========================================================
+# CONFIGURAÇÕES
+# =========================================================
+
+CATEGORIAS_CATALOGO = {
+    "classe": CLASSES,
+    "estilo": ESTILOS,
+    "profissao": PROFISSOES,
+}
+
+LIMITES_PADRAO = {
+    "classe": 200,
+    "estilo": 200,
+    "profissao": 200,
+    "haki": 200,
+    "akuma": 200,
+    "despertar": 200,
+}
+
 
 # =========================================================
 # FUNÇÕES
@@ -22,15 +46,42 @@ def formatar_numero(valor):
     return f"{valor:,}".replace(",", ".")
 
 
-async def verificar_jogador(interaction, user_id):
-    if not await possui_ficha(user_id):
-        await interaction.response.send_message(
-            "❌ Esse jogador não possui ficha.",
-            ephemeral=True
-        )
-        return False
+def obter_limite(categoria, nome):
+    """
+    Profissões podem possuir máximo próprio.
+    Ex.: Cientista = 400%.
+    """
 
-    return True
+    if categoria == "profissao":
+        dados = PROFISSOES.get(nome)
+
+        if dados:
+            return dados.get("maximo", 200)
+
+    return LIMITES_PADRAO.get(
+        categoria,
+        200
+    )
+
+
+def obter_emoji(categoria, nome):
+
+    catalogo = CATEGORIAS_CATALOGO.get(
+        categoria
+    )
+
+    if not catalogo:
+        return "📚"
+
+    dados = catalogo.get(nome)
+
+    if not dados:
+        return "📚"
+
+    return dados.get(
+        "emoji",
+        "📚"
+    )
 
 
 # =========================================================
@@ -39,16 +90,24 @@ async def verificar_jogador(interaction, user_id):
 
 async def criar_embed_admin(membro):
 
-    ficha = await buscar_ficha(membro.id)
+    ficha = await buscar_ficha(
+        membro.id
+    )
 
     if not ficha:
+
         return discord.Embed(
             title="❌ Ficha não encontrada",
-            description=f"{membro.mention} ainda não possui personagem."
+            description=(
+                f"{membro.mention} ainda "
+                "não possui personagem."
+            )
         )
 
-    especializacoes = await buscar_especializacoes(
-        membro.id
+    especializacoes = (
+        await buscar_especializacoes(
+            membro.id
+        )
     )
 
     embed = discord.Embed(
@@ -66,11 +125,15 @@ async def criar_embed_admin(membro):
     embed.add_field(
         name="⚔️ Atributos",
         value=(
-            f"💪 Força: **{formatar_numero(ficha['forca'])}**\n"
+            f"💪 Força: "
+            f"**{formatar_numero(ficha['forca'])}**\n"
+
             f"🛡️ Resistência: "
             f"**{formatar_numero(ficha['resistencia'])}**\n"
+
             f"💨 Velocidade/Agilidade: "
             f"**{formatar_numero(ficha['velocidade'])}**\n\n"
+
             f"✨ Pontos disponíveis: "
             f"**{formatar_numero(ficha['pontos_atributo'])}**"
         ),
@@ -80,20 +143,26 @@ async def criar_embed_admin(membro):
     embed.add_field(
         name="📚 Especializações",
         value=(
-            f"**{len(especializacoes)}** desbloqueadas"
+            f"**{len(especializacoes)}** "
+            "desbloqueadas"
         ),
         inline=True
     )
 
     embed.add_field(
         name="💰 Berries",
-        value=f"฿ {formatar_numero(ficha['berries'])}",
+        value=(
+            f"฿ "
+            f"{formatar_numero(ficha['berries'])}"
+        ),
         inline=True
     )
 
     embed.add_field(
         name="⭐ Reputação",
-        value=formatar_numero(ficha["reputacao"]),
+        value=formatar_numero(
+            ficha["reputacao"]
+        ),
         inline=True
     )
 
@@ -105,7 +174,7 @@ async def criar_embed_admin(membro):
 
 
 # =========================================================
-# MODAL — PONTOS DE ATRIBUTO
+# PONTOS DE ATRIBUTO
 # =========================================================
 
 class PontosAtributoModal(
@@ -124,9 +193,13 @@ class PontosAtributoModal(
         super().__init__()
         self.membro = membro
 
-    async def on_submit(self, interaction):
+    async def on_submit(
+        self,
+        interaction
+    ):
 
         try:
+
             quantidade = int(
                 self.quantidade.value
             )
@@ -135,10 +208,12 @@ class PontosAtributoModal(
                 raise ValueError
 
         except ValueError:
+
             await interaction.response.send_message(
                 "❌ Digite uma quantidade válida.",
                 ephemeral=True
             )
+
             return
 
         await adicionar_pontos_atributo(
@@ -155,7 +230,7 @@ class PontosAtributoModal(
 
 
 # =========================================================
-# MODAL — PONTOS %
+# PONTOS DE DOMÍNIO
 # =========================================================
 
 class PontosPercentuaisModal(
@@ -174,9 +249,13 @@ class PontosPercentuaisModal(
         super().__init__()
         self.membro = membro
 
-    async def on_submit(self, interaction):
+    async def on_submit(
+        self,
+        interaction
+    ):
 
         try:
+
             quantidade = int(
                 self.quantidade.value
             )
@@ -185,10 +264,12 @@ class PontosPercentuaisModal(
                 raise ValueError
 
         except ValueError:
+
             await interaction.response.send_message(
                 "❌ Digite uma quantidade válida.",
                 ephemeral=True
             )
+
             return
 
         await adicionar_pontos_percentuais(
@@ -198,20 +279,358 @@ class PontosPercentuaisModal(
 
         await interaction.response.send_message(
             f"📈 **{formatar_numero(quantidade)}%** "
-            f"adicionados para {self.membro.mention}.",
+            f"adicionados para "
+            f"{self.membro.mention}.",
             ephemeral=True
         )
 
 
 # =========================================================
-# MODAL — ESPECIALIZAÇÃO
+# ADICIONAR ITEM DO CATÁLOGO
 # =========================================================
 
-class EspecializacaoModal(discord.ui.Modal):
+async def desbloquear_item(
+    interaction,
+    membro,
+    categoria,
+    nome
+):
+
+    limite = obter_limite(
+        categoria,
+        nome
+    )
+
+    resultado = (
+        await adicionar_especializacao(
+            user_id=membro.id,
+            categoria=categoria,
+            nome=nome,
+            limite=limite,
+            desbloqueado_por=str(
+                interaction.user.id
+            )
+        )
+    )
+
+    if resultado == "INSERT 0 0":
+
+        await interaction.response.send_message(
+            f"⚠️ **{nome}** já está "
+            f"desbloqueado para "
+            f"{membro.mention}.",
+            ephemeral=True
+        )
+
+        return
+
+    await interaction.response.send_message(
+        f"✅ **{nome}** desbloqueado para "
+        f"{membro.mention}.\n"
+        f"📈 Limite de domínio: "
+        f"**{limite}%**",
+        ephemeral=True
+    )
+
+
+# =========================================================
+# SELECT DE ITEM
+# =========================================================
+
+class ItemCatalogoSelect(
+    discord.ui.Select
+):
+
+    def __init__(
+        self,
+        membro,
+        categoria,
+        itens
+    ):
+
+        self.membro = membro
+        self.categoria = categoria
+
+        opcoes = []
+
+        for nome in itens[:25]:
+
+            emoji = obter_emoji(
+                categoria,
+                nome
+            )
+
+            opcoes.append(
+                discord.SelectOption(
+                    label=nome[:100],
+                    value=nome,
+                    emoji=emoji
+                )
+            )
+
+        super().__init__(
+            placeholder=(
+                f"Escolha "
+                f"{categoria}..."
+            ),
+            options=opcoes
+        )
+
+    async def callback(
+        self,
+        interaction
+    ):
+
+        nome = self.values[0]
+
+        await desbloquear_item(
+            interaction,
+            self.membro,
+            self.categoria,
+            nome
+        )
+
+
+# =========================================================
+# VIEW DO CATÁLOGO
+# =========================================================
+
+class CatalogoView(
+    discord.ui.View
+):
+
+    def __init__(
+        self,
+        dono_id,
+        membro,
+        categoria
+    ):
+
+        super().__init__(
+            timeout=300
+        )
+
+        self.dono_id = dono_id
+        self.membro = membro
+        self.categoria = categoria
+
+        catalogo = (
+            CATEGORIAS_CATALOGO[
+                categoria
+            ]
+        )
+
+        nomes = list(
+            catalogo.keys()
+        )
+
+        self.paginas = [
+            nomes[i:i + 25]
+            for i in range(
+                0,
+                len(nomes),
+                25
+            )
+        ]
+
+        self.pagina = 0
+
+        self.montar()
+
+    def montar(self):
+
+        self.clear_items()
+
+        if not self.paginas:
+            return
+
+        self.add_item(
+            ItemCatalogoSelect(
+                self.membro,
+                self.categoria,
+                self.paginas[
+                    self.pagina
+                ]
+            )
+        )
+
+        if len(self.paginas) > 1:
+
+            anterior = discord.ui.Button(
+                label="Anterior",
+                emoji="⬅️",
+                style=discord.ButtonStyle.secondary,
+                row=1,
+                disabled=(
+                    self.pagina == 0
+                )
+            )
+
+            proximo = discord.ui.Button(
+                label="Próximo",
+                emoji="➡️",
+                style=discord.ButtonStyle.secondary,
+                row=1,
+                disabled=(
+                    self.pagina
+                    >= len(self.paginas) - 1
+                )
+            )
+
+            anterior.callback = (
+                self.anterior
+            )
+
+            proximo.callback = (
+                self.proximo
+            )
+
+            self.add_item(
+                anterior
+            )
+
+            self.add_item(
+                proximo
+            )
+
+        voltar = discord.ui.Button(
+            label="Voltar",
+            emoji="↩️",
+            style=discord.ButtonStyle.secondary,
+            row=2
+        )
+
+        voltar.callback = self.voltar
+
+        self.add_item(
+            voltar
+        )
+
+    async def interaction_check(
+        self,
+        interaction
+    ):
+
+        if (
+            interaction.user.id
+            != self.dono_id
+        ):
+
+            await interaction.response.send_message(
+                "❌ Esse painel pertence "
+                "a outro administrador.",
+                ephemeral=True
+            )
+
+            return False
+
+        if not (
+            interaction.user
+            .guild_permissions
+            .administrator
+        ):
+
+            await interaction.response.send_message(
+                "❌ Apenas administradores "
+                "podem usar esse painel.",
+                ephemeral=True
+            )
+
+            return False
+
+        return True
+
+    async def anterior(
+        self,
+        interaction
+    ):
+
+        if self.pagina > 0:
+            self.pagina -= 1
+
+        self.montar()
+
+        await interaction.response.edit_message(
+            embed=self.gerar_embed(),
+            view=self
+        )
+
+    async def proximo(
+        self,
+        interaction
+    ):
+
+        if (
+            self.pagina
+            < len(self.paginas) - 1
+        ):
+            self.pagina += 1
+
+        self.montar()
+
+        await interaction.response.edit_message(
+            embed=self.gerar_embed(),
+            view=self
+        )
+
+    async def voltar(
+        self,
+        interaction
+    ):
+
+        await interaction.response.edit_message(
+            embed=criar_embed_especializacoes(
+                self.membro
+            ),
+            view=EspecializacoesAdminView(
+                self.dono_id,
+                self.membro
+            )
+        )
+
+    def gerar_embed(self):
+
+        titulo = {
+            "classe": "⚔️ CLASSES",
+            "estilo": "🥋 ESTILOS DE LUTA",
+            "profissao": "🛠️ PROFISSÕES"
+        }
+
+        embed = discord.Embed(
+            title=titulo.get(
+                self.categoria,
+                "📚 CATÁLOGO"
+            ),
+            description=(
+                f"Jogador: "
+                f"{self.membro.mention}\n\n"
+                "Selecione o que deseja "
+                "desbloquear."
+            )
+        )
+
+        embed.set_footer(
+            text=(
+                f"Página "
+                f"{self.pagina + 1}/"
+                f"{len(self.paginas)}"
+            )
+        )
+
+        return embed
+
+
+# =========================================================
+# HAKI / AKUMA / DESPERTAR MANUAL
+# =========================================================
+
+class EspecializacaoManualModal(
+    discord.ui.Modal
+):
 
     nome = discord.ui.TextInput(
         label="Nome",
-        placeholder="Ex: Ittoryu",
+        placeholder="Digite o nome",
         min_length=2,
         max_length=100
     )
@@ -233,19 +652,24 @@ class EspecializacaoModal(discord.ui.Modal):
         self.membro = membro
         self.categoria = categoria
 
-        titulo = (
-            f"Adicionar {categoria.title()}"
-        )
-
         super().__init__(
-            title=titulo[:45]
+            title=(
+                f"Adicionar "
+                f"{categoria.title()}"
+            )[:45]
         )
 
-    async def on_submit(self, interaction):
+    async def on_submit(
+        self,
+        interaction
+    ):
 
-        nome = self.nome.value.strip()
+        nome = (
+            self.nome.value.strip()
+        )
 
         try:
+
             limite = int(
                 self.limite.value
             )
@@ -254,40 +678,46 @@ class EspecializacaoModal(discord.ui.Modal):
                 raise ValueError
 
         except ValueError:
+
             await interaction.response.send_message(
-                "❌ O limite precisa ser um número válido.",
+                "❌ Digite um limite válido.",
                 ephemeral=True
             )
+
             return
 
-        resultado = await adicionar_especializacao(
-            user_id=self.membro.id,
-            categoria=self.categoria,
-            nome=nome,
-            limite=limite,
-            desbloqueado_por=str(
-                interaction.user.id
+        resultado = (
+            await adicionar_especializacao(
+                user_id=self.membro.id,
+                categoria=self.categoria,
+                nome=nome,
+                limite=limite,
+                desbloqueado_por=str(
+                    interaction.user.id
+                )
             )
         )
 
         if resultado == "INSERT 0 0":
+
             await interaction.response.send_message(
-                f"⚠️ **{nome}** já está desbloqueado "
-                f"para {self.membro.mention}.",
+                f"⚠️ **{nome}** já está "
+                "desbloqueado.",
                 ephemeral=True
             )
+
             return
 
         await interaction.response.send_message(
-            f"✅ **{nome}** foi desbloqueado para "
-            f"{self.membro.mention}.\n"
+            f"✅ **{nome}** desbloqueado "
+            f"para {self.membro.mention}.\n"
             f"📈 Limite: **{limite}%**",
             ephemeral=True
         )
 
 
 # =========================================================
-# MODAL — REMOVER ESPECIALIZAÇÃO
+# REMOVER ESPECIALIZAÇÃO
 # =========================================================
 
 class RemoverEspecializacaoModal(
@@ -305,11 +735,19 @@ class RemoverEspecializacaoModal(
         placeholder="Ex: Ittoryu"
     )
 
-    def __init__(self, membro):
+    def __init__(
+        self,
+        membro
+    ):
+
         super().__init__()
+
         self.membro = membro
 
-    async def on_submit(self, interaction):
+    async def on_submit(
+        self,
+        interaction
+    ):
 
         categoria = (
             self.categoria.value
@@ -317,19 +755,26 @@ class RemoverEspecializacaoModal(
             .lower()
         )
 
-        nome = self.nome.value.strip()
+        nome = (
+            self.nome.value.strip()
+        )
 
-        resultado = await remover_especializacao(
-            self.membro.id,
-            categoria,
-            nome
+        resultado = (
+            await remover_especializacao(
+                self.membro.id,
+                categoria,
+                nome
+            )
         )
 
         if resultado == "DELETE 0":
+
             await interaction.response.send_message(
-                "❌ Essa especialização não foi encontrada.",
+                "❌ Essa especialização "
+                "não foi encontrada.",
                 ephemeral=True
             )
+
             return
 
         await interaction.response.send_message(
@@ -340,7 +785,7 @@ class RemoverEspecializacaoModal(
 
 
 # =========================================================
-# MODAL — BERRIES
+# BERRIES
 # =========================================================
 
 class BerriesModal(
@@ -355,22 +800,33 @@ class BerriesModal(
         max_length=20
     )
 
-    def __init__(self, membro):
+    def __init__(
+        self,
+        membro
+    ):
+
         super().__init__()
+
         self.membro = membro
 
-    async def on_submit(self, interaction):
+    async def on_submit(
+        self,
+        interaction
+    ):
 
         try:
+
             quantidade = int(
                 self.quantidade.value
             )
 
         except ValueError:
+
             await interaction.response.send_message(
                 "❌ Digite um número válido.",
                 ephemeral=True
             )
+
             return
 
         await adicionar_berries(
@@ -378,17 +834,23 @@ class BerriesModal(
             quantidade
         )
 
-        sinal = "+" if quantidade >= 0 else ""
+        sinal = (
+            "+"
+            if quantidade >= 0
+            else ""
+        )
 
         await interaction.response.send_message(
-            f"💰 Berries de {self.membro.mention}: "
-            f"**{sinal}{formatar_numero(quantidade)}**",
+            f"💰 Berries de "
+            f"{self.membro.mention}: "
+            f"**{sinal}"
+            f"{formatar_numero(quantidade)}**",
             ephemeral=True
         )
 
 
 # =========================================================
-# MODAL — REPUTAÇÃO
+# REPUTAÇÃO
 # =========================================================
 
 class ReputacaoModal(
@@ -403,22 +865,33 @@ class ReputacaoModal(
         max_length=15
     )
 
-    def __init__(self, membro):
+    def __init__(
+        self,
+        membro
+    ):
+
         super().__init__()
+
         self.membro = membro
 
-    async def on_submit(self, interaction):
+    async def on_submit(
+        self,
+        interaction
+    ):
 
         try:
+
             quantidade = int(
                 self.quantidade.value
             )
 
         except ValueError:
+
             await interaction.response.send_message(
                 "❌ Digite um número válido.",
                 ephemeral=True
             )
+
             return
 
         await adicionar_reputacao(
@@ -426,24 +899,52 @@ class ReputacaoModal(
             quantidade
         )
 
-        sinal = "+" if quantidade >= 0 else ""
+        sinal = (
+            "+"
+            if quantidade >= 0
+            else ""
+        )
 
         await interaction.response.send_message(
-            f"⭐ Reputação de {self.membro.mention}: "
-            f"**{sinal}{formatar_numero(quantidade)}**",
+            f"⭐ Reputação de "
+            f"{self.membro.mention}: "
+            f"**{sinal}"
+            f"{formatar_numero(quantidade)}**",
             ephemeral=True
         )
 
 
 # =========================================================
-# MENU DE ESPECIALIZAÇÕES
+# EMBED ESPECIALIZAÇÕES
+# =========================================================
+
+def criar_embed_especializacoes(
+    membro
+):
+
+    return discord.Embed(
+        title="📚 ESPECIALIZAÇÕES",
+        description=(
+            f"Gerenciando "
+            f"{membro.mention}\n\n"
+            "Escolha a categoria que "
+            "deseja desbloquear."
+        )
+    )
+
+
+# =================
+# MENU DE CATEGORIA
 # =========================================================
 
 class EspecializacaoSelect(
     discord.ui.Select
 ):
 
-    def __init__(self, membro):
+    def __init__(
+        self,
+        membro
+    ):
 
         self.membro = membro
 
@@ -451,57 +952,77 @@ class EspecializacaoSelect(
             discord.SelectOption(
                 label="Classe",
                 value="classe",
-                emoji="⚔️",
-                description="Adicionar uma classe."
+                emoji="⚔️"
             ),
             discord.SelectOption(
                 label="Estilo",
                 value="estilo",
-                emoji="🥋",
-                description="Adicionar um estilo de luta."
+                emoji="🥋"
             ),
             discord.SelectOption(
                 label="Profissão",
                 value="profissao",
-                emoji="🛠️",
-                description="Adicionar uma profissão."
+                emoji="🛠️"
             ),
             discord.SelectOption(
                 label="Haki",
                 value="haki",
-                emoji="👁️",
-                description="Adicionar um tipo de Haki."
+                emoji="👁️"
             ),
             discord.SelectOption(
                 label="Akuma no Mi",
                 value="akuma",
-                emoji="🍈",
-                description="Adicionar uma Akuma no Mi."
+                emoji="🍈"
             ),
             discord.SelectOption(
                 label="Despertar",
                 value="despertar",
-                emoji="🌟",
-                description="Liberar um despertar."
+                emoji="🌟"
             )
         ]
 
         super().__init__(
-            placeholder="O que deseja desbloquear?",
+            placeholder=(
+                "O que deseja desbloquear?"
+            ),
             options=opcoes
         )
 
-    async def callback(self, interaction):
+    async def callback(
+        self,
+        interaction
+    ):
 
         categoria = self.values[0]
 
+        # Catálogos oficiais
+        if categoria in CATEGORIAS_CATALOGO:
+
+            view = CatalogoView(
+                self.view.dono_id,
+                self.membro,
+                categoria
+            )
+
+            await interaction.response.edit_message(
+                embed=view.gerar_embed(),
+                view=view
+            )
+
+            return
+
+        # Ainda sem catálogo oficial
         await interaction.response.send_modal(
-            EspecializacaoModal(
+            EspecializacaoManualModal(
                 self.membro,
                 categoria
             )
         )
 
+
+# =========================================================
+# VIEW ESPECIALIZAÇÕES
+# =========================================================
 
 class EspecializacoesAdminView(
     discord.ui.View
@@ -531,18 +1052,31 @@ class EspecializacoesAdminView(
         interaction
     ):
 
-        if interaction.user.id != self.dono_id:
+        if (
+            interaction.user.id
+            != self.dono_id
+        ):
+
             await interaction.response.send_message(
-                "❌ Esse painel pertence a outro administrador.",
+                "❌ Esse painel pertence "
+                "a outro administrador.",
                 ephemeral=True
             )
+
             return False
 
-        if not interaction.user.guild_permissions.administrator:
+        if not (
+            interaction.user
+            .guild_permissions
+            .administrator
+        ):
+
             await interaction.response.send_message(
-                "❌ Apenas administradores podem usar esse painel.",
+                "❌ Apenas administradores "
+                "podem usar esse painel.",
                 ephemeral=True
             )
+
             return False
 
         return True
@@ -561,6 +1095,30 @@ class EspecializacoesAdminView(
 
         await interaction.response.send_modal(
             RemoverEspecializacaoModal(
+                self.membro
+            )
+        )
+
+    @discord.ui.button(
+        label="Voltar",
+        emoji="↩️",
+        style=discord.ButtonStyle.secondary,
+        row=1
+    )
+    async def voltar(
+        self,
+        interaction,
+        button
+    ):
+
+        await interaction.response.edit_message(
+            embed=(
+                await criar_embed_admin(
+                    self.membro
+                )
+            ),
+            view=AdminView(
+                self.dono_id,
                 self.membro
             )
         )
@@ -592,23 +1150,34 @@ class AdminView(
         interaction
     ):
 
-        if interaction.user.id != self.dono_id:
+        if (
+            interaction.user.id
+            != self.dono_id
+        ):
+
             await interaction.response.send_message(
-                "❌ Esse painel pertence a outro administrador.",
+                "❌ Esse painel pertence "
+                "a outro administrador.",
                 ephemeral=True
             )
+
             return False
 
-        if not interaction.user.guild_permissions.administrator:
+        if not (
+            interaction.user
+            .guild_permissions
+            .administrator
+        ):
+
             await interaction.response.send_message(
-                "❌ Apenas administradores podem usar esse painel.",
+                "❌ Apenas administradores "
+                "podem usar esse painel.",
                 ephemeral=True
             )
+
             return False
 
         return True
-
-    # ROW 0
 
     @discord.ui.button(
         label="Pontos",
@@ -646,8 +1215,6 @@ class AdminView(
             )
         )
 
-    # ROW 1
-
     @discord.ui.button(
         label="Especializações",
         emoji="📚",
@@ -660,23 +1227,15 @@ class AdminView(
         button
     ):
 
-        embed = discord.Embed(
-            title="📚 ESPECIALIZAÇÕES",
-            description=(
-                f"Gerenciando {self.membro.mention}\n\n"
-                "Escolha a categoria que deseja desbloquear."
-            )
-        )
-
         await interaction.response.edit_message(
-            embed=embed,
+            embed=criar_embed_especializacoes(
+                self.membro
+            ),
             view=EspecializacoesAdminView(
                 self.dono_id,
                 self.membro
             )
         )
-
-    # ROW 2
 
     @discord.ui.button(
         label="Berries",
@@ -714,8 +1273,6 @@ class AdminView(
             )
         )
 
-    # ROW 3
-
     @discord.ui.button(
         label="Atualizar",
         emoji="🔄",
@@ -745,14 +1302,16 @@ class AdminView(
 # COG
 # =========================================================
 
-class Admin(commands.Cog):
+class Admin(
+    commands.Cog
+):
 
-    def __init__(self, bot):
+    def __init__(
+        self,
+        bot
+    ):
+
         self.bot = bot
-
-    # =====================================================
-    # !ADMIN
-    # =====================================================
 
     @commands.command()
     @commands.has_permissions(
@@ -765,27 +1324,31 @@ class Admin(commands.Cog):
     ):
 
         if membro is None:
+
             await ctx.send(
                 "❌ Use:\n"
                 "`!admin @jogador`"
             )
+
             return
 
         if not await possui_ficha(
             membro.id
         ):
+
             await ctx.send(
                 f"❌ {membro.mention} "
                 "não possui ficha."
             )
+
             return
 
-        embed = await criar_embed_admin(
-            membro
-        )
-
         await ctx.send(
-            embed=embed,
+            embed=(
+                await criar_embed_admin(
+                    membro
+                )
+            ),
             view=AdminView(
                 ctx.author.id,
                 membro
@@ -798,6 +1361,7 @@ class Admin(commands.Cog):
 # =========================================================
 
 async def setup(bot):
+
     await bot.add_cog(
         Admin(bot)
-      )
+        )
