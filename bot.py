@@ -133,6 +133,56 @@ bot = SeasParadiseBot()
 
 
 # =========================================================
+# COMANDOS BÁSICOS
+# =========================================================
+
+@bot.command(name="ping")
+async def ping(ctx):
+
+    latencia = round(
+        bot.latency * 1000
+    )
+
+    await ctx.send(
+        f"🏓 Pong! `{latencia}ms`"
+    )
+
+
+@bot.command(name="ajuda")
+async def ajuda(ctx):
+
+    embed = discord.Embed(
+        title="🏴‍☠️ Sea's Paradise",
+        description=(
+            "Central de ajuda do Sea's Paradise."
+        ),
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="🏓 !ping",
+        value=(
+            "Verifica se o bot está "
+            "respondendo."
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="📜 !ajuda",
+        value=(
+            "Mostra esta mensagem "
+            "de ajuda."
+        ),
+        inline=False
+    )
+
+    await ctx.send(
+        embed=embed
+    )
+
+
+# =========================================================
 # BOT ONLINE
 # =========================================================
 
