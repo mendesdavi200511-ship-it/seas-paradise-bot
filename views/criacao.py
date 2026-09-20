@@ -1,4 +1,5 @@
 import random
+import asyncio
 import discord
 
 
@@ -341,6 +342,89 @@ def criar_embed(usuario):
 
 
 # =========================================================
+# INATIVIDADE DA CRIAÇÃO
+# =========================================================
+
+TEMPO_INATIVIDADE = 20
+
+_tarefas_inatividade = {}
+_mensagens_criacao = {}
+
+
+def renovar_inatividade(user_id, mensagem=None):
+
+    if mensagem is not None:
+        _mensagens_criacao[user_id] = mensagem
+
+    tarefa = _tarefas_inatividade.get(user_id)
+
+    if tarefa and not tarefa.done():
+        tarefa.cancel()
+
+    async def aguardar():
+
+        try:
+
+            await asyncio.sleep(
+                TEMPO_INATIVIDADE
+            )
+
+            criando.pop(
+                user_id,
+                None
+            )
+
+            mensagem_atual = (
+                _mensagens_criacao.pop(
+                    user_id,
+                    None
+                )
+            )
+
+            _tarefas_inatividade.pop(
+                user_id,
+                None
+            )
+
+            if mensagem_atual:
+
+                try:
+                    await mensagem_atual.delete()
+
+                except (
+                    discord.NotFound,
+                    discord.Forbidden,
+                    discord.HTTPException
+                ):
+                    pass
+
+        except asyncio.CancelledError:
+            pass
+
+    _tarefas_inatividade[user_id] = (
+        asyncio.create_task(
+            aguardar()
+        )
+    )
+
+
+def encerrar_inatividade(user_id):
+
+    tarefa = _tarefas_inatividade.pop(
+        user_id,
+        None
+    )
+
+    if tarefa and not tarefa.done():
+        tarefa.cancel()
+
+    _mensagens_criacao.pop(
+        user_id,
+        None
+    )
+
+
+# =========================================================
 # VIEW BASE
 # =========================================================
 
@@ -355,7 +439,7 @@ class ViewDoJogador(
     ):
 
         super().__init__(
-            timeout=600
+            timeout=None
         )
 
         self.dono_id = dono_id
@@ -383,6 +467,11 @@ class ViewDoJogador(
 
         obter_rascunho(
             self.dono_id
+        )
+
+        renovar_inatividade(
+            self.dono_id,
+            interaction.message
         )
 
         return True
@@ -426,6 +515,11 @@ class NomeModal(
 
         dados["nome"] = (
             self.nome.value.strip()
+        )
+
+        renovar_inatividade(
+            interaction.user.id,
+            interaction.message
         )
 
         await interaction.response.edit_message(
@@ -507,6 +601,11 @@ class IdadeModal(
 
         dados["idade"] = idade
 
+        renovar_inatividade(
+            interaction.user.id,
+            interaction.message
+        )
+
         await interaction.response.edit_message(
             embed=criar_embed(
                 interaction.user
@@ -562,6 +661,11 @@ class ImagemModal(
             url
             if url
             else None
+        )
+
+        renovar_inatividade(
+            interaction.user.id,
+            interaction.message
         )
 
         await interaction.response.edit_message(
@@ -1138,6 +1242,10 @@ class CriacaoView(
             )
 
             return
+
+        encerrar_inatividade(
+            interaction.user.id
+        )
 
         await self.confirmar_callback(
             interaction
