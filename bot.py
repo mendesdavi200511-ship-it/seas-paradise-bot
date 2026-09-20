@@ -1,8 +1,10 @@
 import os
 import discord
+import asyncpg
 from discord.ext import commands
 
 TOKEN = os.getenv("DISCORD_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -18,9 +20,61 @@ bot = commands.Bot(
 # Sistema de RP
 # ==========================================
 
+db = None
+
+
+# ==========================================
+# BANCO DE DADOS
+# ==========================================
+
+async def conectar_banco():
+    global db
+
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL não foi configurado."
+        )
+
+    db = await asyncpg.create_pool(DATABASE_URL)
+
+    async with db.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS fichas (
+                user_id BIGINT PRIMARY KEY,
+                nome TEXT NOT NULL,
+
+                raca TEXT NOT NULL DEFAULT 'Não definida',
+                faccao TEXT NOT NULL DEFAULT 'Civil',
+                profissao TEXT NOT NULL DEFAULT 'Nenhuma',
+                classe TEXT NOT NULL DEFAULT 'Nenhuma',
+
+                forca INTEGER NOT NULL DEFAULT 0,
+                resistencia INTEGER NOT NULL DEFAULT 0,
+                velocidade INTEGER NOT NULL DEFAULT 0,
+
+                berries BIGINT NOT NULL DEFAULT 0,
+                reputacao INTEGER NOT NULL DEFAULT 0,
+
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+    print("🐘 PostgreSQL conectado!")
+    print("📦 Tabela de fichas pronta!")
+
+
+# ==========================================
+# INICIALIZAÇÃO
+# ==========================================
 
 @bot.event
 async def on_ready():
+
+    global db
+
+    if db is None:
+        await conectar_banco()
+
     print(f"🏴‍☠️ Seas Paradise conectado como {bot.user}")
     print(f"ID: {bot.user.id}")
     print("Bot online!")
@@ -32,48 +86,58 @@ async def on_ready():
 
 @bot.command()
 async def ping(ctx):
-    await ctx.send("🏴‍☠️ **Pong! Seas Paradise está online!**")
+
+    await ctx.send(
+        "🏴‍☠️ **Pong! Seas Paradise está online!**"
+    )
 
 
 # ==========================================
-# FICHAS - versão inicial
+# REGISTRAR PERSONAGEM
 # ==========================================
-
-fichas = {}
-
 
 @bot.command()
 async def registrar(ctx, *, nome=None):
 
     if nome is None:
+
         await ctx.send(
             "❌ Informe o nome do personagem.\n"
             "Exemplo: `!registrar Monkey D. Luffy`"
         )
+
         return
 
     user_id = ctx.author.id
 
-    if user_id in fichas:
+    personagem = await db.fetchrow(
+        """
+        SELECT user_id
+        FROM fichas
+        WHERE user_id = $1
+        """,
+        user_id
+    )
+
+    if personagem:
+
         await ctx.send(
             "❌ Você já possui um personagem registrado."
         )
+
         return
 
-    fichas[user_id] = {
-        "nome": nome,
-        "raca": "Não definida",
-        "faccao": "Civil",
-        "profissao": "Nenhuma",
-        "classe": "Nenhuma",
-
-        "forca": 0,
-        "resistencia": 0,
-        "velocidade": 0,
-
-        "berries": 0,
-        "reputacao": 0
-    }
+    await db.execute(
+        """
+        INSERT INTO fichas (
+            user_id,
+            nome
+        )
+        VALUES ($1, $2)
+        """,
+        user_id,
+        nome
+    )
 
     embed = discord.Embed(
         title="🏴‍☠️ PERSONAGEM REGISTRADO",
@@ -107,16 +171,23 @@ async def ficha(ctx, membro: discord.Member = None):
 
     membro = membro or ctx.author
 
-    user_id = membro.id
+    personagem = await db.fetchrow(
+        """
+        SELECT *
+        FROM fichas
+        WHERE user_id = $1
+        """,
+        membro.id
+    )
 
-    if user_id not in fichas:
+    if not personagem:
+
         await ctx.send(
             f"❌ {membro.mention} ainda não possui personagem.\n"
             "Use `!registrar Nome do Personagem`."
         )
-        return
 
-    personagem = fichas[user_id]
+        return
 
     embed = discord.Embed(
         title=f"🏴‍☠️ {personagem['nome']}",
@@ -206,6 +277,11 @@ async def ajuda(ctx):
 if not TOKEN:
     raise RuntimeError(
         "DISCORD_TOKEN não foi configurado."
+    )
+
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL não foi configurado."
     )
 
 bot.run(TOKEN)
