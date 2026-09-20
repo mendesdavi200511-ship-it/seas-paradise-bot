@@ -208,20 +208,4 @@ if not TOKEN:
         "DISCORD_TOKEN não foi configurado."
     )
 
-bot.run(TOKEN)        name="📜 Comandos",
-        value=(
-            "`!ping` — Testa se o bot está online.\n"
-            "`!ajuda` — Mostra os comandos disponíveis."
-        ),
-        inline=False
-    )
-
-    await ctx.send(embed=embed)
-
-
-if not TOKEN:
-    raise RuntimeError(
-        "DISCORD_TOKEN não foi configurado."
-    )
-
 bot.run(TOKEN)
