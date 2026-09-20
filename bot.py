@@ -14,8 +14,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 db = None
 
-# Criações que ainda não foram confirmadas.
-# Depois podemos persistir rascunhos também.
+# Criações que ainda não foram confirmadas
 criando = {}
 
 ATRIBUTO_MAXIMO = 50000
@@ -59,7 +58,7 @@ async def conectar_banco():
             );
         """)
 
-        # Migração da tabela antiga, caso ela já exista.
+        # Migrações caso a tabela já exista
         await conn.execute("""
             ALTER TABLE fichas
             ADD COLUMN IF NOT EXISTS familia TEXT
@@ -75,6 +74,10 @@ async def conectar_banco():
     print("🐘 PostgreSQL conectado!")
     print("📦 Banco do Sea's Paradise pronto!")
 
+
+# =========================================================
+# BOT ONLINE
+# =========================================================
 
 @bot.event
 async def on_ready():
@@ -323,34 +326,73 @@ class AtributosView(discord.ui.View):
 
         return True
 
-    @discord.ui.button(label="+ Força", emoji="💪")
+    @discord.ui.button(
+        label="+ Força",
+        emoji="💪",
+        style=discord.ButtonStyle.primary
+    )
     async def mais_forca(self, interaction, button):
-        self.adicionar(interaction.user.id, "forca")
+        self.adicionar(
+            interaction.user.id,
+            "forca"
+        )
         await self.atualizar(interaction)
 
-    @discord.ui.button(label="- Força")
+    @discord.ui.button(
+        label="- Força",
+        style=discord.ButtonStyle.secondary
+    )
     async def menos_forca(self, interaction, button):
-        self.remover(interaction.user.id, "forca")
+        self.remover(
+            interaction.user.id,
+            "forca"
+        )
         await self.atualizar(interaction)
 
-    @discord.ui.button(label="+ Resistência", emoji="🛡️")
+    @discord.ui.button(
+        label="+ Resistência",
+        emoji="🛡️",
+        style=discord.ButtonStyle.primary
+    )
     async def mais_resistencia(self, interaction, button):
-        self.adicionar(interaction.user.id, "resistencia")
+        self.adicionar(
+            interaction.user.id,
+            "resistencia"
+        )
         await self.atualizar(interaction)
 
-    @discord.ui.button(label="- Resistência")
+    @discord.ui.button(
+        label="- Resistência",
+        style=discord.ButtonStyle.secondary
+    )
     async def menos_resistencia(self, interaction, button):
-        self.remover(interaction.user.id, "resistencia")
+        self.remover(
+            interaction.user.id,
+            "resistencia"
+        )
         await self.atualizar(interaction)
 
-    @discord.ui.button(label="+ Velocidade", emoji="💨")
+    @discord.ui.button(
+        label="+ Velocidade",
+        emoji="💨",
+        style=discord.ButtonStyle.primary
+    )
     async def mais_velocidade(self, interaction, button):
-        self.adicionar(interaction.user.id, "velocidade")
+        self.adicionar(
+            interaction.user.id,
+            "velocidade"
+        )
         await self.atualizar(interaction)
 
-    @discord.ui.button(label="- Velocidade")
+    @discord.ui.button(
+        label="- Velocidade",
+        style=discord.ButtonStyle.secondary
+    )
     async def menos_velocidade(self, interaction, button):
-        self.remover(interaction.user.id, "velocidade")
+        self.remover(
+            interaction.user.id,
+            "velocidade"
+        )
         await self.atualizar(interaction)
 
     @discord.ui.button(
@@ -392,7 +434,9 @@ class CriacaoView(discord.ui.View):
         row=0
     )
     async def definir_nome(self, interaction, button):
-        await interaction.response.send_modal(NomeModal())
+        await interaction.response.send_modal(
+            NomeModal()
+        )
 
     @discord.ui.button(
         label="Raça",
@@ -402,7 +446,8 @@ class CriacaoView(discord.ui.View):
     )
     async def escolher_raca(self, interaction, button):
         await interaction.response.send_message(
-            "🧬 O catálogo oficial de **Raças** será adicionado na próxima etapa.",
+            "🧬 O catálogo oficial de **Raças** "
+            "será adicionado na próxima etapa.",
             ephemeral=True
         )
 
@@ -414,7 +459,8 @@ class CriacaoView(discord.ui.View):
     )
     async def escolher_familia(self, interaction, button):
         await interaction.response.send_message(
-            "🩸 O sistema oficial de **Famílias/Roll** será adicionado na próxima etapa.",
+            "🩸 O sistema oficial de **Famílias/Roll** "
+            "será adicionado na próxima etapa.",
             ephemeral=True
         )
 
@@ -438,7 +484,8 @@ class CriacaoView(discord.ui.View):
     )
     async def escolher_profissao(self, interaction, button):
         await interaction.response.send_message(
-            "🛠️ O catálogo oficial de **Profissões** será adicionado na próxima etapa.",
+            "🛠️ O catálogo oficial de **Profissões** "
+            "será adicionado na próxima etapa.",
             ephemeral=True
         )
 
@@ -450,7 +497,8 @@ class CriacaoView(discord.ui.View):
     )
     async def escolher_classe(self, interaction, button):
         await interaction.response.send_message(
-            "⚔️ O catálogo oficial de **Classes** será adicionado na próxima etapa.",
+            "⚔️ O catálogo oficial de **Classes** "
+            "será adicionado na próxima etapa.",
             ephemeral=True
         )
 
@@ -479,21 +527,24 @@ class CriacaoView(discord.ui.View):
 
         if not dados:
             await interaction.response.send_message(
-                "❌ Sua criação expirou. Use `!criar` novamente.",
+                "❌ Sua criação expirou. "
+                "Use `!criar` novamente.",
                 ephemeral=True
             )
             return
 
         if not dados["nome"]:
             await interaction.response.send_message(
-                "❌ Você precisa definir o **nome do personagem**.",
+                "❌ Você precisa definir o "
+                "**nome do personagem**.",
                 ephemeral=True
             )
             return
 
         if dados["pontos"] > 0:
             await interaction.response.send_message(
-                f"❌ Você ainda possui **{dados['pontos']} pontos de atributo** "
+                f"❌ Você ainda possui "
+                f"**{dados['pontos']} pontos de atributo** "
                 "para distribuir.",
                 ephemeral=True
             )
@@ -553,7 +604,10 @@ class CriacaoView(discord.ui.View):
 
         embed.add_field(
             name="📜 Ficha",
-            value="Use `!ficha` para visualizar seu personagem.",
+            value=(
+                "Use `!ficha` para visualizar "
+                "seu personagem."
+            ),
             inline=False
         )
 
@@ -612,10 +666,14 @@ async def ficha(ctx, membro: discord.Member = None):
 
     embed = discord.Embed(
         title=f"🏴‍☠️ {personagem['nome']}",
-        description="**Ficha de Personagem — Sea's Paradise**"
+        description=(
+            "**Ficha de Personagem — Sea's Paradise**"
+        )
     )
 
-    embed.set_thumbnail(url=membro.display_avatar.url)
+    embed.set_thumbnail(
+        url=membro.display_avatar.url
+    )
 
     embed.add_field(
         name="🌊 Informações",
@@ -633,8 +691,10 @@ async def ficha(ctx, membro: discord.Member = None):
         name="⚔️ Atributos",
         value=(
             f"💪 **Força:** {personagem['forca']:,}\n"
-            f"🛡️ **Resistência:** {personagem['resistencia']:,}\n"
-            f"💨 **Velocidade/Agilidade:** {personagem['velocidade']:,}"
+            f"🛡️ **Resistência:** "
+            f"{personagem['resistencia']:,}\n"
+            f"💨 **Velocidade/Agilidade:** "
+            f"{personagem['velocidade']:,}"
         ),
         inline=False
     )
@@ -693,7 +753,9 @@ async def resetarficha(ctx, membro: discord.Member = None):
 
 @bot.command()
 async def ping(ctx):
-    await ctx.send("🏴‍☠️ **Pong! Seas Paradise está online!**")
+    await ctx.send(
+        "🏴‍☠️ **Pong! Seas Paradise está online!**"
+    )
 
 
 # =========================================================
@@ -720,7 +782,9 @@ async def ajuda(ctx):
 
     embed.add_field(
         name="🔧 Sistema",
-        value="`!ping` — Verifica se o bot está online",
+        value=(
+            "`!ping` — Verifica se o bot está online"
+        ),
         inline=False
     )
 
@@ -728,8 +792,17 @@ async def ajuda(ctx):
 
 
 # =========================================================
-# INICIAR
+# INICIAR BOT
 # =========================================================
 
 if not TOKEN:
-    raise RuntimeError
+    raise RuntimeError(
+        "DISCORD_TOKEN não foi configurado."
+    )
+
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL não foi configurado."
+    )
+
+bot.run(TOKEN)
