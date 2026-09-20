@@ -10,6 +10,8 @@ from database.database import (
     buscar_pontos_percentuais,
     distribuir_percentual,
     adicionar_especializacao,
+    buscar_rolagem_criacao,
+    resetar_rolagem_criacao,
 )
 
 from views.criacao import (
@@ -42,7 +44,7 @@ from data.profissoes import PROFISSOES
 # CONFIGURAÇÕES
 # =========================================================
 
-TIMEOUT_PAINEL = 20
+TIMEOUT_PAINEL = 300
 
 
 # =========================================================
@@ -1244,9 +1246,28 @@ class Personagem(
 
             return
 
-        criando[
-            ctx.author.id
-        ] = novo_rascunho()
+        dados = criando.get(ctx.author.id)
+
+        if dados is None:
+            dados = novo_rascunho()
+
+            rolagem = await buscar_rolagem_criacao(ctx.author.id)
+
+            if rolagem:
+                for chave in (
+                    "raca", "familia", "haoshoku", "prodigio",
+                    "raca_sorteada", "familia_sorteada",
+                    "haoshoku_sorteado", "prodigio_sorteado"
+                ):
+                    try:
+                        valor = rolagem[chave]
+                    except (KeyError, TypeError):
+                        continue
+
+                    if valor is not None:
+                        dados[chave] = valor
+
+            criando[ctx.author.id] = dados
 
         await ctx.send(
             embed=criar_embed(
@@ -1474,6 +1495,10 @@ class Personagem(
             await deletar_ficha(
                 membro.id
             )
+        )
+
+        await resetar_rolagem_criacao(
+            membro.id
         )
 
         criando.pop(
