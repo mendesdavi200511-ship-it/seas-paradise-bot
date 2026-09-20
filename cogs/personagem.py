@@ -1313,12 +1313,6 @@ class Personagem(
         ctx
     ):
 
-    @commands.command()
-    async def editar(
-        self,
-        ctx
-    ):
-
         personagem = (
             await buscar_ficha(
                 ctx.author.id
