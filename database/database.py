@@ -49,6 +49,7 @@ async def fechar_banco():
 
 
 def get_pool():
+
     if _pool is None:
         raise RuntimeError(
             "O banco de dados ainda não foi conectado."
@@ -77,6 +78,11 @@ async def criar_tabelas():
 
                 nome TEXT NOT NULL,
 
+                idade INTEGER NOT NULL
+                    DEFAULT 18,
+
+                imagem TEXT,
+
                 raca TEXT NOT NULL
                     DEFAULT 'Não definida',
 
@@ -100,6 +106,12 @@ async def criar_tabelas():
 
                 despertar TEXT NOT NULL
                     DEFAULT 'Não',
+
+                haoshoku BOOLEAN NOT NULL
+                    DEFAULT FALSE,
+
+                prodigio BOOLEAN NOT NULL
+                    DEFAULT FALSE,
 
                 forca INTEGER NOT NULL
                     DEFAULT 0,
@@ -126,10 +138,21 @@ async def criar_tabelas():
 
         # =================================================
         # MIGRAÇÕES
-        # Mantém compatibilidade com fichas antigas
+        # Compatibilidade com fichas antigas
         # =================================================
 
         migracoes = [
+
+            """
+            ALTER TABLE fichas
+            ADD COLUMN IF NOT EXISTS idade INTEGER
+            NOT NULL DEFAULT 18;
+            """,
+
+            """
+            ALTER TABLE fichas
+            ADD COLUMN IF NOT EXISTS imagem TEXT;
+            """,
 
             """
             ALTER TABLE fichas
@@ -175,6 +198,18 @@ async def criar_tabelas():
 
             """
             ALTER TABLE fichas
+            ADD COLUMN IF NOT EXISTS haoshoku BOOLEAN
+            NOT NULL DEFAULT FALSE;
+            """,
+
+            """
+            ALTER TABLE fichas
+            ADD COLUMN IF NOT EXISTS prodigio BOOLEAN
+            NOT NULL DEFAULT FALSE;
+            """,
+
+            """
+            ALTER TABLE fichas
             ADD COLUMN IF NOT EXISTS forca INTEGER
             NOT NULL DEFAULT 0;
             """,
@@ -214,7 +249,7 @@ async def criar_tabelas():
             await conn.execute(migracao)
 
         # =================================================
-        # CARTEIRA DE PONTOS %
+        # CARTEIRA DE PONTOS DE DOMÍNIO
         # =================================================
 
         await conn.execute("""
@@ -231,13 +266,7 @@ async def criar_tabelas():
         """)
 
         # =================================================
-        # ESPECIALIZAÇÕES
-        #
-        # Exemplos:
-        # estilo -> Ittoryu
-        # haki -> Busoshoku
-        # profissao -> Navegador
-        # akuma -> Mera Mera no Mi
+        # ESPECIALIZAÇÕES / DOMÍNIOS
         # =================================================
 
         await conn.execute("""
@@ -332,6 +361,7 @@ async def buscar_ficha(user_id):
 async def criar_ficha(
     user_id,
     nome,
+    idade=18,
     raca="Não definida",
     familia="Não definida",
     faccao="Civil",
@@ -340,6 +370,9 @@ async def criar_ficha(
     estilo="Nenhum",
     akuma="Nenhuma",
     despertar="Não",
+    haoshoku=False,
+    prodigio=False,
+    imagem=None,
     forca=0,
     resistencia=0,
     velocidade=0,
@@ -357,6 +390,8 @@ async def criar_ficha(
                 INSERT INTO fichas (
                     user_id,
                     nome,
+                    idade,
+                    imagem,
                     raca,
                     familia,
                     faccao,
@@ -365,6 +400,8 @@ async def criar_ficha(
                     estilo,
                     akuma,
                     despertar,
+                    haoshoku,
+                    prodigio,
                     forca,
                     resistencia,
                     velocidade,
@@ -372,13 +409,15 @@ async def criar_ficha(
                 )
 
                 VALUES (
-                    $1, $2, $3, $4, $5,
-                    $6, $7, $8, $9, $10,
-                    $11, $12, $13, $14
+                    $1, $2, $3, $4, $5, $6,
+                    $7, $8, $9, $10, $11, $12,
+                    $13, $14, $15, $16, $17, $18
                 );
                 """,
                 user_id,
                 nome,
+                idade,
+                imagem,
                 raca,
                 familia,
                 faccao,
@@ -387,6 +426,8 @@ async def criar_ficha(
                 estilo,
                 akuma,
                 despertar,
+                haoshoku,
+                prodigio,
                 forca,
                 resistencia,
                 velocidade,
@@ -400,7 +441,10 @@ async def criar_ficha(
                     disponiveis
                 )
 
-                VALUES ($1, 0)
+                VALUES (
+                    $1,
+                    0
+                )
 
                 ON CONFLICT (user_id)
                 DO NOTHING;
@@ -423,10 +467,13 @@ async def deletar_ficha(user_id):
 
 
 # =========================================================
-# EDITAR FICHA
+# EDITAR IDENTIDADE
 # =========================================================
 
-async def alterar_nome(user_id, nome):
+async def alterar_nome(
+    user_id,
+    nome
+):
 
     db = get_pool()
 
@@ -441,7 +488,51 @@ async def alterar_nome(user_id, nome):
     )
 
 
-async def alterar_faccao(user_id, faccao):
+async def alterar_idade(
+    user_id,
+    idade
+):
+
+    if idade <= 0:
+        raise ValueError(
+            "A idade precisa ser maior que zero."
+        )
+
+    db = get_pool()
+
+    await db.execute(
+        """
+        UPDATE fichas
+        SET idade = $1
+        WHERE user_id = $2;
+        """,
+        idade,
+        user_id
+    )
+
+
+async def alterar_imagem(
+    user_id,
+    imagem
+):
+
+    db = get_pool()
+
+    await db.execute(
+        """
+        UPDATE fichas
+        SET imagem = $1
+        WHERE user_id = $2;
+        """,
+        imagem,
+        user_id
+    )
+
+
+async def alterar_faccao(
+    user_id,
+    faccao
+):
 
     db = get_pool()
 
@@ -452,6 +543,50 @@ async def alterar_faccao(user_id, faccao):
         WHERE user_id = $2;
         """,
         faccao,
+        user_id
+    )
+
+
+# =========================================================
+# HAOUSHOKU
+# =========================================================
+
+async def alterar_haoshoku(
+    user_id,
+    possui
+):
+
+    db = get_pool()
+
+    await db.execute(
+        """
+        UPDATE fichas
+        SET haoshoku = $1
+        WHERE user_id = $2;
+        """,
+        possui,
+        user_id
+    )
+
+
+# =========================================================
+# PRODÍGIO
+# =========================================================
+
+async def alterar_prodigio(
+    user_id,
+    possui
+):
+
+    db = get_pool()
+
+    await db.execute(
+        """
+        UPDATE fichas
+        SET prodigio = $1
+        WHERE user_id = $2;
+        """,
+        possui,
         user_id
     )
 
@@ -533,6 +668,7 @@ async def distribuir_atributo(
     }
 
     if atributo not in atributos_validos:
+
         raise ValueError(
             "Atributo inválido."
         )
@@ -566,12 +702,20 @@ async def distribuir_atributo(
             if not ficha:
                 return False
 
-            if ficha["pontos_atributo"] < quantidade:
+            if (
+                ficha["pontos_atributo"]
+                < quantidade
+            ):
                 return False
 
-            atual = ficha[atributo]
+            atual = ficha[
+                atributo
+            ]
 
-            if atual + quantidade > limite:
+            if (
+                atual + quantidade
+                > limite
+            ):
                 return False
 
             await conn.execute(
@@ -579,7 +723,9 @@ async def distribuir_atributo(
                 UPDATE fichas
 
                 SET
-                    {atributo} = {atributo} + $1,
+                    {atributo} =
+                        {atributo} + $1,
+
                     pontos_atributo =
                         pontos_atributo - $1
 
@@ -593,10 +739,46 @@ async def distribuir_atributo(
 
 
 # =========================================================
+# ATUALIZAR ATRIBUTOS
+# =========================================================
+
+async def atualizar_atributos(
+    user_id,
+    forca,
+    resistencia,
+    velocidade,
+    pontos
+):
+
+    db = get_pool()
+
+    await db.execute(
+        """
+        UPDATE fichas
+
+        SET
+            forca = $1,
+            resistencia = $2,
+            velocidade = $3,
+            pontos_atributo = $4
+
+        WHERE user_id = $5;
+        """,
+        forca,
+        resistencia,
+        velocidade,
+        pontos,
+        user_id
+    )
+
+
+# =========================================================
 # PONTOS PERCENTUAIS
 # =========================================================
 
-async def buscar_pontos_percentuais(user_id):
+async def buscar_pontos_percentuais(
+    user_id
+):
 
     db = get_pool()
 
@@ -620,6 +802,7 @@ async def adicionar_pontos_percentuais(
 ):
 
     if quantidade <= 0:
+
         raise ValueError(
             "A quantidade precisa ser maior que zero."
         )
@@ -652,8 +835,6 @@ async def adicionar_pontos_percentuais(
 
 # =========================================================
 # ESPECIALIZAÇÕES
-# Somente comandos administrativos deverão chamar
-# desbloqueio/remoção.
 # =========================================================
 
 async def adicionar_especializacao(
@@ -665,6 +846,7 @@ async def adicionar_especializacao(
 ):
 
     if limite <= 0:
+
         raise ValueError(
             "O limite precisa ser maior que zero."
         )
@@ -707,7 +889,9 @@ async def adicionar_especializacao(
     )
 
 
-async def buscar_especializacoes(user_id):
+async def buscar_especializacoes(
+    user_id
+):
 
     db = get_pool()
 
@@ -775,8 +959,6 @@ async def remover_especializacao(
 
 # =========================================================
 # DISTRIBUIR %
-# O PLAYER PODE USAR ESTA FUNÇÃO PARA DISTRIBUIR
-# OS PONTOS QUE O ADMIN CONCEDEU
 # =========================================================
 
 async def distribuir_percentual(
@@ -810,36 +992,46 @@ async def distribuir_percentual(
             if not carteira:
                 return False
 
-            if carteira["disponiveis"] < quantidade:
+            if (
+                carteira["disponiveis"]
+                < quantidade
+            ):
                 return False
 
-            especializacao = await conn.fetchrow(
-                """
-                SELECT
-                    id,
-                    porcentagem,
-                    limite
+            especializacao = (
+                await conn.fetchrow(
+                    """
+                    SELECT
+                        id,
+                        porcentagem,
+                        limite
 
-                FROM especializacoes
+                    FROM especializacoes
 
-                WHERE id = $1
-                AND user_id = $2
+                    WHERE id = $1
+                    AND user_id = $2
 
-                FOR UPDATE;
-                """,
-                especializacao_id,
-                user_id
+                    FOR UPDATE;
+                    """,
+                    especializacao_id,
+                    user_id
+                )
             )
 
             if not especializacao:
                 return False
 
             nova_porcentagem = (
-                especializacao["porcentagem"]
+                especializacao[
+                    "porcentagem"
+                ]
                 + quantidade
             )
 
-            if nova_porcentagem > especializacao["limite"]:
+            if (
+                nova_porcentagem
+                > especializacao["limite"]
+            ):
                 return False
 
             await conn.execute(
@@ -919,37 +1111,5 @@ async def adicionar_reputacao(
         WHERE user_id = $2;
         """,
         quantidade,
-        user_id
-        )
-
-# =========================================================
-# =========================================================
-# ATUALIZAR ATRIBUTOS
-# =========================================================
-
-async def atualizar_atributos(
-    user_id,
-    forca,
-    resistencia,
-    velocidade,
-    pontos
-):
-
-    db = get_pool()
-
-    await db.execute(
-        """
-        UPDATE fichas
-        SET
-            forca = $1,
-            resistencia = $2,
-            velocidade = $3,
-            pontos_atributo = $4
-        WHERE user_id = $5;
-        """,
-        forca,
-        resistencia,
-        velocidade,
-        pontos,
         user_id
     )
