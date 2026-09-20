@@ -923,6 +923,7 @@ async def adicionar_reputacao(
         )
 
 # =========================================================
+# =========================================================
 # ATUALIZAR ATRIBUTOS
 # =========================================================
 
@@ -933,22 +934,22 @@ async def atualizar_atributos(
     velocidade,
     pontos
 ):
-    global pool
 
-    async with pool.acquire() as conexao:
-        await conexao.execute(
-            """
-            UPDATE personagens
-            SET
-                forca = $1,
-                resistencia = $2,
-                velocidade = $3,
-                pontos_atributo = $4
-            WHERE user_id = $5
-            """,
-            forca,
-            resistencia,
-            velocidade,
-            pontos,
-            user_id
-        )
+    db = get_pool()
+
+    await db.execute(
+        """
+        UPDATE fichas
+        SET
+            forca = $1,
+            resistencia = $2,
+            velocidade = $3,
+            pontos_atributo = $4
+        WHERE user_id = $5;
+        """,
+        forca,
+        resistencia,
+        velocidade,
+        pontos,
+        user_id
+    )
