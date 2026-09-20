@@ -918,6 +918,7 @@ class CriacaoView(ViewDoJogador):
         )
 
     # -----------------------------------------------------
+    # -----------------------------------------------------
     # CONFIRMAR
     # -----------------------------------------------------
 
@@ -938,4 +939,81 @@ class CriacaoView(ViewDoJogador):
             await interaction.response.send_message(
                 "❌ A confirmação não está disponível.",
                 ephemeral=True
-  
+            )
+            return
+
+        dados = criando.get(
+            interaction.user.id
+        )
+
+        if not dados:
+
+            await interaction.response.send_message(
+                "❌ Sua criação não está mais ativa.",
+                ephemeral=True
+            )
+            return
+
+        # =================================================
+        # VALIDAÇÕES
+        # =================================================
+
+        if not dados["nome"]:
+
+            await interaction.response.send_message(
+                "❌ Defina o **nome** do personagem antes de confirmar.",
+                ephemeral=True
+            )
+            return
+
+        if dados["raca"] == "Não definida":
+
+            await interaction.response.send_message(
+                "❌ Escolha uma **raça** antes de confirmar.",
+                ephemeral=True
+            )
+            return
+
+        if dados["familia"] == "Não definida":
+
+            await interaction.response.send_message(
+                "❌ Escolha uma **família** antes de confirmar.",
+                ephemeral=True
+            )
+            return
+
+        if dados["profissao"] == "Nenhuma":
+
+            await interaction.response.send_message(
+                "❌ Escolha uma **profissão** antes de confirmar.",
+                ephemeral=True
+            )
+            return
+
+        if dados["classe"] == "Nenhuma":
+
+            await interaction.response.send_message(
+                "❌ Escolha uma **classe** antes de confirmar.",
+                ephemeral=True
+            )
+            return
+
+        if dados["pontos"] > 0:
+
+            await interaction.response.send_message(
+                (
+                    "❌ Você ainda possui "
+                    f"**{dados['pontos']} pontos de atributo** "
+                    "para distribuir."
+                ),
+                ephemeral=True
+            )
+            return
+
+        # =================================================
+        # CALLBACK PARA SALVAR PERSONAGEM
+        # =================================================
+
+        await self.confirmar_callback(
+            interaction
+        )
