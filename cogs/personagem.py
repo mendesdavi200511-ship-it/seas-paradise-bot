@@ -47,6 +47,9 @@ from data.profissoes import PROFISSOES
 TIMEOUT_PAINEL = 300
 
 
+CANAL_CRIACAO_ID = 1551379201939218502
+
+
 # =========================================================
 # FUNÇÕES AUXILIARES
 # =========================================================
@@ -1234,52 +1237,206 @@ class Personagem(
         ctx
     ):
 
-        if await possui_ficha(
-            ctx.author.id
-        ):
+        # O !criar só pode ser iniciado no canal oficial
+        # ou dentro de uma thread pertencente a ele.
+        eh_thread_criacao = (
+            isinstance(ctx.channel, discord.Thread)
+            and ctx.channel.parent_id == CANAL_CRIACAO_ID
+        )
 
-            await ctx.send(
-                "❌ Você já possui um personagem.\n"
-                "Use `!ficha` para visualizá-lo.",
-                delete_after=TIMEOUT_PAINEL
+        if (
+            ctx.channel.id != CANAL_CRIACAO_ID
+            and not eh_thread_criacao
+        ):
+            aviso = await ctx.send(
+                f"❌ Use `!criar` em <#{CANAL_CRIACAO_ID}>."
             )
+
+            try:
+                await ctx.message.delete()
+            except (discord.Forbidden, discord.NotFound):
+                pass
+
+            try:
+                await aviso.delete(delay=10)
+            except (discord.Forbidden, discord.NotFound):
+                pass
 
             return
 
-        dados = criando.get(ctx.author.id)
+        if await possui_ficha(
+            ctx.author.id
+        ):
+            aviso = await ctx.send(
+                "❌ Você já possui um personagem.\n"
+                "Use `!ficha` para visualizá-lo."
+            )
 
-        if dados is None:
-            dados = novo_rascunho()
+            try:
+                await ctx.message.delete()
+            except (discord.Forbidden, discord.NotFound):
+                pass
 
-            rolagem = await buscar_rolagem_criacao(ctx.author.id)
+            try:
+                await aviso.delete(delay=10)
+            except (discord.Forbidden, discord.NotFound):
+                pass
 
-            if rolagem:
-                for chave in (
-                    "raca", "familia", "haoshoku", "prodigio",
-                    "raca_sorteada", "familia_sorteada",
-                    "haoshoku_sorteado", "prodigio_sorteado"
-                ):
-                    try:
-                        valor = rolagem[chave]
-                    except (KeyError, TypeError):
-                        continue
+            return
 
-                    if valor is not None:
-                        dados[chave] = valor
+        guild = ctx.guild
 
-            criando[ctx.author.id] = dados
+        if guild is None:
+            return
 
-        await ctx.send(
+        canal = guild.get_channel(
+            CANAL_CRIACAO_ID
+        )
+
+        if canal is None:
+            await ctx.send(
+                "❌ O canal oficial de criação não foi encontrado."
+            )
+            return
+
+        thread = None
+        marcador = f"sp-{ctx.author.id}"
+
+        # Se já estiver na própria thread, usa ela.
+        if eh_thread_criacao:
+            thread = ctx.channel
+
+        # Procura uma thread ativa existente.
+        if thread is None:
+            for candidata in canal.threads:
+                if candidata.name.endswith(marcador):
+                    thread = candidata
+                    break
+
+        # Procura também threads arquivadas para impedir duplicação.
+        if thread is None:
+            try:
+                async for candidata in canal.archived_threads(limit=100):
+                    if candidata.name.endswith(marcador):
+                        thread = candidata
+                        break
+            except (
+                discord.Forbidden,
+                discord.HTTPException,
+                AttributeError
+            ):
+                pass
+
+        # Só cria uma nova se o jogador realmente não possuir uma.
+        if thread is None:
+            nome_thread = (
+                f"🏴‍☠️-{ctx.author.display_name[:45]}-{marcador}"
+            )
+
+            try:
+                thread = await canal.create_thread(
+                    name=nome_thread[:100],
+                    type=discord.ChannelType.public_thread,
+                    auto_archive_duration=1440,
+                    reason=(
+                        "Sea's Paradise — criação de personagem "
+                        f"de {ctx.author}"
+                    )
+                )
+
+            except discord.Forbidden:
+                await ctx.send(
+                    "❌ O bot não possui permissão para criar "
+                    "tópicos neste canal."
+                )
+                return
+
+            except discord.HTTPException as erro:
+                print(
+                    "❌ ERRO AO CRIAR THREAD:",
+                    type(erro).__name__,
+                    erro
+                )
+
+                await ctx.send(
+                    "❌ Não consegui criar seu tópico de criação."
+                )
+                return
+
+        # Se a thread antiga estiver arquivada, reabre.
+        try:
+            if thread.archived:
+                await thread.edit(
+                    archived=False,
+                    reason="Jogador retomou a criação."
+                )
+
+            if thread.locked:
+                await thread.edit(
+                    locked=False,
+                    reason="Jogador retomou a criação."
+                )
+
+        except (
+            discord.Forbidden,
+            discord.HTTPException
+        ):
+            pass
+
+        try:
+            await thread.add_user(
+                ctx.author
+            )
+        except (
+            discord.Forbidden,
+            discord.HTTPException,
+            AttributeError
+        ):
+            pass
+
+        # Limpa o comando digitado.
+        try:
+            await ctx.message.delete()
+        except (
+            discord.Forbidden,
+            discord.NotFound
+        ):
+            pass
+
+        # Mantém o fluxo atual. novo_rascunho() continua responsável
+        # por recuperar/preservar os sorteios conforme a versão atual.
+        criando[
+            ctx.author.id
+        ] = novo_rascunho()
+
+        await thread.send(
+            content=ctx.author.mention,
             embed=criar_embed(
                 ctx.author
             ),
             view=CriacaoView(
                 ctx.author.id,
                 confirmar_criacao
-            ),
-            delete_after=TIMEOUT_PAINEL
+            )
         )
 
+        # No canal principal fica apenas um aviso temporário.
+        if ctx.channel.id == CANAL_CRIACAO_ID:
+            try:
+                aviso = await canal.send(
+                    f"{ctx.author.mention}, sua criação está em "
+                    f"{thread.mention}."
+                )
+
+                await aviso.delete(
+                    delay=10
+                )
+
+            except (
+                discord.Forbidden,
+                discord.HTTPException
+            ):
+                pass
 
     # =====================================================
     # !FICHA
@@ -1324,7 +1481,8 @@ class Personagem(
         )
 
 
-        # =====================================================
+        #
+        =====================================================
     # !EDITAR
     # =====================================================
 
