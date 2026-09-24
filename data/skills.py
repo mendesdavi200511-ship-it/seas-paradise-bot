@@ -4,11 +4,12 @@
 # =========================================================
 
 
-def estilo(emoji, categoria, descricao):
+def estilo(emoji, categoria, descricao, skills=None):
     return {
         "emoji": emoji,
         "categoria": categoria,
-        "descricao": descricao
+        "descricao": descricao,
+        "skills": skills or []
     }
 
 
@@ -93,7 +94,10 @@ ESTILOS = {
 
     "Black Leg Style": estilo(
         "🦵", "Lutador",
-        "Estilo de combate especializado exclusivamente no uso das pernas."
+        "Estilo de combate especializado exclusivamente no uso das pernas.",
+        [{"pct": 25, "nome": "Fundamentos do Black Leg", "descricao": "Base técnica de chutes e movimentação do estilo."},
+         {"pct": 50, "nome": "Diable Jambe", "descricao": "Evolução do Black Leg que utiliza calor intenso nas pernas."},
+         {"pct": 100, "nome": "Ifrit Jambe", "descricao": "Evolução máxima cadastrada do Black Leg, combinando enorme calor e velocidade."}]
     ),
 
     "Diable Jambe": estilo(
@@ -112,6 +116,20 @@ ESTILOS = {
         "Estilo racial dos Minks que utiliza eletricidade produzida pelo corpo."
     ),
 
+
+    "Free Style": estilo(
+        "🥊", "Lutador",
+        "Estilo livre, sem escola formal fixa, moldado pelo próprio personagem.",
+        [{"pct": 25, "nome": "Fundamentos Livres", "descricao": "Consolida a base pessoal do combatente."},
+         {"pct": 50, "nome": "Adaptação", "descricao": "Aprimora a identidade e adaptação do estilo próprio."},
+         {"pct": 75, "nome": "Assinatura Pessoal", "descricao": "Permite consolidar uma técnica autoral coerente com o estilo."},
+         {"pct": 100, "nome": "Estilo Próprio", "descricao": "Domínio completo da escola de combate criada pelo personagem."}],
+    ),
+
+    "Tontatta Fight": estilo(
+        "🧚", "Lutador",
+        "Estilo racial dos Tontatta que explora tamanho, força e agilidade incomuns."
+    ),
 
     # ==================== LONGA DISTÂNCIA ====================
 
@@ -201,3 +219,15 @@ def estilos_por_classe(classe):
 
 def quantidade_estilos():
     return len(ESTILOS)
+
+# Progressão padrão para estilos cujo catálogo antigo ainda não possuía técnicas
+# individualizadas. Mantém o estilo utilizável agora sem inventar golpes canônicos;
+# técnicas autorais/específicas podem substituir estes marcos depois.
+for _nome, _dados in ESTILOS.items():
+    if not _dados.get("skills"):
+        _dados["skills"] = [
+            {"pct": 25, "nome": "Fundamentos", "descricao": f"Domínio dos fundamentos de {_nome}."},
+            {"pct": 50, "nome": "Técnica Intermediária", "descricao": f"Aplicação intermediária de {_nome}."},
+            {"pct": 75, "nome": "Técnica Avançada", "descricao": f"Aplicação avançada de {_nome}."},
+            {"pct": 100, "nome": "Maestria", "descricao": f"Domínio completo de {_nome}."},
+        ]
