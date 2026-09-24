@@ -47,6 +47,9 @@ def obter_limite_dominio(tipo, nome):
     if tipo == "haki":
         return None
 
+    if tipo in ("akuma", "akuma no mi"):
+        return 300
+
     return DOMINIO_MAXIMO_PADRAO
 
 
