@@ -37,6 +37,17 @@ for _id, _nome, _preco in [
 ]:
     ITENS[_id] = dict(nome=f"Eternal Pose — {_nome}", emoji="🧭", categoria="navegacao", preco=_preco, vendavel=True, consumivel=False, destino=_nome, descricao=f"Aponta permanentemente para {_nome}.")
 
+
+# Capturas de pesca — entram no inventário e podem ser vendidas/usar em sistemas futuros.
+ITENS.update({
+    "peixe_comum": dict(nome="Pescado Comum",emoji="🐟",categoria="pesca",preco=500,vendavel=True,consumivel=False,descricao="Peixes comuns capturados no mar."),
+    "peixe_incomum": dict(nome="Pescado Incomum",emoji="🐠",categoria="pesca",preco=1800,vendavel=True,consumivel=False,descricao="Captura incomum, valorizada em mercados e cozinhas."),
+    "peixe_raro": dict(nome="Pescado Raro",emoji="🦈",categoria="pesca",preco=6500,vendavel=True,consumivel=False,descricao="Captura rara de alto valor."),
+    "peixe_lendario": dict(nome="Pescado Lendário",emoji="🐉",categoria="pesca",preco=25000,vendavel=True,consumivel=False,descricao="Uma captura excepcional e extremamente rara."),
+    "akuma_misteriosa": dict(nome="Akuma no Mi Misteriosa",emoji="🍈",categoria="especial",preco=0,vendavel=False,consumivel=False,descricao="Uma Akuma no Mi ainda não identificada. Deve ser identificada/consumida pelo sistema de Akuma antes de conceder poder."),
+    "mapa_tesouro": dict(nome="Mapa de Tesouro",emoji="🗺️",categoria="especial",preco=0,vendavel=False,consumivel=False,descricao="Um mapa que aponta para um tesouro especial. Pode alimentar futuras explorações/eventos."),
+})
+
 EMBARCACOES = {
     "barco_pequeno": dict(nome="Barco Pequeno", emoji="🛶", preco=25000, capacidade=2, carga=5, integridade=100),
     "veleiro_pequeno": dict(nome="Veleiro Pequeno", emoji="⛵", preco=80000, capacidade=4, carga=15, integridade=200),
