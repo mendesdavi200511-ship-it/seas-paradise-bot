@@ -8,7 +8,8 @@ ITENS = {
     "refeicao_completa": dict(nome="Refeição Completa", emoji="🍲", categoria="consumivel", preco=1500, vendavel=True, consumivel=True, descricao="Uma refeição farta e de qualidade."),
     "primeiros_socorros": dict(nome="Kit de Primeiros Socorros", emoji="🩹", categoria="consumivel", preco=4000, vendavel=True, consumivel=True, descricao="Material para cuidados básicos. O uso é registrado; efeitos narrativos dependem da situação."),
     "kit_medico": dict(nome="Kit Médico", emoji="🩺", categoria="consumivel", preco=12000, vendavel=True, consumivel=True, descricao="Material médico avançado. Não substitui automaticamente uma ação médica no RP."),
-    "kit_reparo": dict(nome="Kit de Reparo Naval", emoji="🔧", categoria="naval", preco=8000, vendavel=True, consumivel=True, descricao="Recupera 50 pontos de integridade da embarcação ativa.", efeito="reparo_navio", valor_efeito=50),
+    "kit_reparo": dict(nome="Kit de Reparo Naval", emoji="🔧", categoria="naval", preco=8000, vendavel=True, consumivel=True, descricao="Material para reparos emergenciais. Com Carpinteiro, o rendimento aumenta conforme o domínio.", efeito="reparo_navio", valor_efeito=50),
+    "revestimento_navio": dict(nome="Revestimento de Sabaody", emoji="🫧", categoria="naval", preco=50000, vendavel=False, consumivel=True, descricao="Revestimento especial necessário para a descida marítima até a Ilha dos Homens-Peixe."),
     "mantimentos": dict(nome="Caixa de Mantimentos", emoji="📦", categoria="suprimento", preco=5000, vendavel=True, consumivel=False, descricao="Mantimentos para viagens e carga."),
     "espada_comum": dict(nome="Espada Comum", emoji="⚔️", categoria="arma", preco=10000, vendavel=True, consumivel=False, descricao="Uma espada simples e confiável."),
     "katana": dict(nome="Katana", emoji="🗡️", categoria="arma", preco=20000, vendavel=True, consumivel=False, descricao="Katana de boa fabricação."),
@@ -51,6 +52,14 @@ LOJAS = {
     "Baratie": {"itens": ["refeicao_simples","refeicao_completa","mantimentos","kit_reparo","carta_east_blue","eternal_baratie"], "barcos": []},
     "Conomi Islands": {"itens": ["refeicao_simples","mantimentos","bussola","carta_east_blue","binoculo","kit_reparo","eternal_conomi"], "barcos": ["barco_pequeno","veleiro_pequeno"]},
     "Loguetown": {"itens": list(ITENS.keys()), "barcos": list(EMBARCACOES.keys())},
+    "Sabaody Archipelago": {"itens": ["refeicao_completa","kit_medico","kit_reparo","mantimentos","log_pose","den_den_mushi","binoculo","revestimento_navio"], "barcos": ["veleiro","caravela"]},
+    "Water 7": {"itens": ["refeicao_completa","kit_medico","kit_reparo","mantimentos","log_pose","den_den_mushi"], "barcos": ["veleiro","caravela","galeao"]},
+    "Alabasta": {"itens": ["refeicao_simples","kit_medico","mantimentos","log_pose","den_den_mushi"], "barcos": []},
+    "Dressrosa": {"itens": ["refeicao_completa","kit_medico","kit_reparo","mantimentos","log_pose","den_den_mushi"], "barcos": ["veleiro","caravela"]},
+    "Whole Cake Island": {"itens": ["refeicao_completa","kit_medico","mantimentos","log_pose","den_den_mushi"], "barcos": []},
+    "Wano Country": {"itens": ["refeicao_completa","kit_medico","kit_reparo","mantimentos"], "barcos": []},
+    "Egghead": {"itens": ["kit_medico","kit_reparo","log_pose","den_den_mushi","binoculo"], "barcos": []},
+    "Elbaf": {"itens": ["refeicao_completa","kit_medico","kit_reparo","mantimentos","log_pose"], "barcos": []},
 }
 
 ROTAS = {
@@ -63,6 +72,9 @@ ROTAS = {
 }
 
 ALIASES_LOCAL = {
+    "sabaody": "Sabaody Archipelago", "sabaody park": "Sabaody Archipelago", "shabondy": "Sabaody Archipelago",
+    "water 7": "Water 7", "alabasta": "Alabasta", "arabasta": "Alabasta", "dressrosa": "Dressrosa",
+    "whole cake": "Whole Cake Island", "wano": "Wano Country", "egghead": "Egghead", "elbaf": "Elbaf",
     "dawn": "Dawn Island", "dawn island": "Dawn Island", "ilha dawn": "Dawn Island", "foosha": "Dawn Island", "vila foosha": "Dawn Island",
     "orange": "Orange Town", "orange town": "Orange Town",
     "syrup": "Syrup Village", "syrup village": "Syrup Village", "vila syrup": "Syrup Village",
