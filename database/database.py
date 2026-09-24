@@ -578,6 +578,46 @@ async def criar_tabelas():
         """)
 
         # =================================================
+        # ECONOMIA — INVENTÁRIO / TRANSAÇÕES / EMBARCAÇÕES
+        # =================================================
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS inventario (
+                user_id BIGINT NOT NULL,
+                item_id TEXT NOT NULL,
+                quantidade INTEGER NOT NULL DEFAULT 0 CHECK (quantidade >= 0),
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, item_id),
+                FOREIGN KEY (user_id) REFERENCES fichas(user_id) ON DELETE CASCADE
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS transacoes_economia (
+                id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL, tipo TEXT NOT NULL,
+                valor BIGINT NOT NULL DEFAULT 0, item_id TEXT, quantidade INTEGER NOT NULL DEFAULT 1,
+                detalhes TEXT, criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES fichas(user_id) ON DELETE CASCADE
+            );
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_transacoes_economia_user
+            ON transacoes_economia(user_id, criado_em DESC);
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS embarcacoes (
+                id BIGSERIAL PRIMARY KEY, proprietario_id BIGINT NOT NULL, tipo TEXT NOT NULL,
+                nome TEXT NOT NULL DEFAULT 'Sem nome', integridade_atual INTEGER NOT NULL,
+                integridade_max INTEGER NOT NULL, capacidade INTEGER NOT NULL, carga_max INTEGER NOT NULL,
+                localizacao TEXT, ativa BOOLEAN NOT NULL DEFAULT FALSE,
+                criado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP, atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (proprietario_id) REFERENCES fichas(user_id) ON DELETE CASCADE
+            );
+        """)
+        await conn.execute("""
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_embarcacao_ativa_proprietario
+            ON embarcacoes(proprietario_id) WHERE ativa=TRUE;
+        """)
+
+        # =================================================
         # GARANTIR CARTEIRA PARA FICHAS ANTIGAS
         # =================================================
 
@@ -2246,3 +2286,90 @@ async def listar_participantes_ciclo(sessao_id,ciclo):
     db=get_pool()
     return await db.fetch("""SELECT * FROM participantes_sessao WHERE sessao_id=$1 AND status='ativo'
         AND participa_desde_ciclo <= $2 ORDER BY entrou_em;""",int(sessao_id),int(ciclo))
+
+# =========================================================
+# ECONOMIA — INVENTÁRIO / LOJA / EMBARCAÇÕES
+# =========================================================
+
+async def buscar_inventario(user_id):
+    return await get_pool().fetch("SELECT * FROM inventario WHERE user_id=$1 AND quantidade>0 ORDER BY item_id;", user_id)
+
+async def buscar_item_inventario(user_id, item_id):
+    return await get_pool().fetchrow("SELECT * FROM inventario WHERE user_id=$1 AND item_id=$2 AND quantidade>0;", user_id, item_id)
+
+async def registrar_transacao_economia(user_id, tipo, valor=0, item_id=None, quantidade=1, detalhes=None, conn=None):
+    db = conn or get_pool()
+    await db.execute("""INSERT INTO transacoes_economia(user_id,tipo,valor,item_id,quantidade,detalhes) VALUES($1,$2,$3,$4,$5,$6);""",
+                     user_id, tipo, int(valor), item_id, int(quantidade), detalhes)
+
+async def adicionar_item_inventario(user_id, item_id, quantidade=1, conn=None):
+    db=conn or get_pool()
+    await db.execute("""INSERT INTO inventario(user_id,item_id,quantidade,atualizado_em) VALUES($1,$2,$3,CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id,item_id) DO UPDATE SET quantidade=inventario.quantidade+EXCLUDED.quantidade, atualizado_em=CURRENT_TIMESTAMP;""",
+        user_id,item_id,int(quantidade))
+
+async def consumir_item(user_id,item_id,quantidade=1):
+    db=get_pool()
+    async with db.acquire() as conn:
+        async with conn.transaction():
+            row=await conn.fetchrow("SELECT quantidade FROM inventario WHERE user_id=$1 AND item_id=$2 FOR UPDATE;",user_id,item_id)
+            if not row or row['quantidade']<quantidade:return False
+            await conn.execute("UPDATE inventario SET quantidade=quantidade-$3,atualizado_em=CURRENT_TIMESTAMP WHERE user_id=$1 AND item_id=$2;",user_id,item_id,quantidade)
+            await registrar_transacao_economia(user_id,"consumo",0,item_id,quantidade,None,conn)
+            return True
+
+async def comprar_item(user_id,item_id,preco,quantidade=1):
+    total=int(preco)*int(quantidade); db=get_pool()
+    async with db.acquire() as conn:
+        async with conn.transaction():
+            ficha=await conn.fetchrow("SELECT berries FROM fichas WHERE user_id=$1 FOR UPDATE;",user_id)
+            if not ficha:return False,"Ficha não encontrada."
+            if ficha['berries']<total:return False,f"Berries insuficientes. Necessário: ฿ {total:,}.".replace(',', '.')
+            await conn.execute("UPDATE fichas SET berries=berries-$1 WHERE user_id=$2;",total,user_id)
+            await adicionar_item_inventario(user_id,item_id,quantidade,conn)
+            await registrar_transacao_economia(user_id,"compra",-total,item_id,quantidade,None,conn)
+            return True,"Compra concluída. O item foi enviado ao seu inventário."
+
+async def vender_item(user_id,item_id,valor_unitario,quantidade=1):
+    total=int(valor_unitario)*int(quantidade); db=get_pool()
+    async with db.acquire() as conn:
+        async with conn.transaction():
+            row=await conn.fetchrow("SELECT quantidade FROM inventario WHERE user_id=$1 AND item_id=$2 FOR UPDATE;",user_id,item_id)
+            if not row or row['quantidade']<quantidade:return False,"Você não possui esse item em quantidade suficiente."
+            await conn.execute("UPDATE inventario SET quantidade=quantidade-$3,atualizado_em=CURRENT_TIMESTAMP WHERE user_id=$1 AND item_id=$2;",user_id,item_id,quantidade)
+            await conn.execute("UPDATE fichas SET berries=berries+$1 WHERE user_id=$2;",total,user_id)
+            await registrar_transacao_economia(user_id,"venda",total,item_id,quantidade,None,conn)
+            return True,f"Venda concluída. Você recebeu ฿ {total:,}.".replace(',', '.')
+
+async def comprar_embarcacao(user_id,tipo,dados,localizacao):
+    preco=int(dados['preco']); db=get_pool()
+    async with db.acquire() as conn:
+        async with conn.transaction():
+            ficha=await conn.fetchrow("SELECT berries FROM fichas WHERE user_id=$1 FOR UPDATE;",user_id)
+            if not ficha:return False,"Ficha não encontrada."
+            if ficha['berries']<preco:return False,"Berries insuficientes para essa embarcação."
+            existe=await conn.fetchval("SELECT EXISTS(SELECT 1 FROM embarcacoes WHERE proprietario_id=$1 AND ativa=TRUE);",user_id)
+            await conn.execute("UPDATE fichas SET berries=berries-$1 WHERE user_id=$2;",preco,user_id)
+            nome=f"{dados['nome']} de bordo"
+            await conn.execute("""INSERT INTO embarcacoes(proprietario_id,tipo,nome,integridade_atual,integridade_max,capacidade,carga_max,localizacao,ativa)
+                VALUES($1,$2,$3,$4,$4,$5,$6,$7,$8);""",user_id,tipo,nome,int(dados['integridade']),int(dados['capacidade']),int(dados['carga']),localizacao,not existe)
+            await registrar_transacao_economia(user_id,"compra_embarcacao",-preco,tipo,1,localizacao,conn)
+            return True,f"{dados['nome']} adquirido. Use `!nomearnavio <nome>` para nomear sua embarcação ativa."
+
+async def buscar_embarcacoes(user_id):
+    return await get_pool().fetch("SELECT * FROM embarcacoes WHERE proprietario_id=$1 ORDER BY ativa DESC,id;",user_id)
+
+async def buscar_embarcacao_ativa(user_id):
+    return await get_pool().fetchrow("SELECT * FROM embarcacoes WHERE proprietario_id=$1 AND ativa=TRUE LIMIT 1;",user_id)
+
+async def renomear_embarcacao(embarcacao_id,user_id,nome):
+    return await get_pool().execute("UPDATE embarcacoes SET nome=$1,atualizado_em=CURRENT_TIMESTAMP WHERE id=$2 AND proprietario_id=$3;",nome,embarcacao_id,user_id)
+
+async def mover_embarcacao(embarcacao_id,localizacao):
+    return await get_pool().execute("UPDATE embarcacoes SET localizacao=$1,atualizado_em=CURRENT_TIMESTAMP WHERE id=$2;",localizacao,embarcacao_id)
+
+async def reparar_embarcacao(embarcacao_id,quantidade):
+    return await get_pool().fetchrow("""UPDATE embarcacoes SET integridade_atual=LEAST(integridade_max,integridade_atual+$1), atualizado_em=CURRENT_TIMESTAMP WHERE id=$2 RETURNING *;""",int(quantidade),embarcacao_id)
+
+async def contar_itens_inventario(user_id):
+    return await get_pool().fetchval("SELECT COALESCE(SUM(quantidade),0) FROM inventario WHERE user_id=$1 AND quantidade>0;",user_id)
