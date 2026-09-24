@@ -335,6 +335,15 @@ async def criar_tabelas():
             );
         """)
 
+        # Migração aditiva: Akuma no Mi evolui até 300% (100% kit normal; 300% condição de despertar).
+        # Corrige fichas antigas criadas quando o limite padrão ainda era 200%.
+        await conn.execute("""
+            UPDATE especializacoes
+            SET limite = 300
+            WHERE LOWER(categoria) IN ('akuma', 'akuma no mi')
+              AND limite < 300;
+        """)
+
         # =================================================
         # MUNDO PERSISTENTE — NPCS
         # =================================================
@@ -701,6 +710,28 @@ async def criar_tabelas():
         """)
         await conn.execute("""CREATE TABLE IF NOT EXISTS cooldowns_gameplay (user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, chave TEXT NOT NULL, disponivel_em TIMESTAMPTZ NOT NULL, atualizado_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(user_id,chave));""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS formas_personagem (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, nome TEXT NOT NULL, bonus_forca INTEGER NOT NULL DEFAULT 0, bonus_resistencia INTEGER NOT NULL DEFAULT 0, bonus_velocidade INTEGER NOT NULL DEFAULT 0, capacidades TEXT, requisitos TEXT, ativa BOOLEAN NOT NULL DEFAULT FALSE, desbloqueada BOOLEAN NOT NULL DEFAULT TRUE, criado_em TIMESTAMPTZ DEFAULT NOW(), UNIQUE(user_id,nome));""")
+        # Embarque coletivo: plano antes da partida + passageiros da viagem real.
+        await conn.execute("""CREATE TABLE IF NOT EXISTS planos_viagem (
+            id BIGSERIAL PRIMARY KEY, proprietario_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE,
+            embarcacao_id BIGINT NOT NULL REFERENCES embarcacoes(id) ON DELETE CASCADE,
+            origem TEXT NOT NULL, destino TEXT NOT NULL, canal_id BIGINT, vagas INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'embarque', criado_em TIMESTAMPTZ DEFAULT NOW()
+        );""")
+        await conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_plano_viagem_owner_aberto ON planos_viagem(proprietario_id) WHERE status='embarque';""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS embarques_viagem (
+            plano_id BIGINT NOT NULL REFERENCES planos_viagem(id) ON DELETE CASCADE,
+            user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE,
+            embarcou_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(plano_id,user_id)
+        );""")
+        await conn.execute("DROP INDEX IF EXISTS uq_embarque_user_aberto;")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_embarque_user ON embarques_viagem(user_id);")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS viagem_passageiros (
+            viagem_id BIGINT NOT NULL REFERENCES viagens(id) ON DELETE CASCADE,
+            user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE,
+            PRIMARY KEY(viagem_id,user_id)
+        );""")
+        await conn.execute("""CREATE INDEX IF NOT EXISTS idx_viagem_passageiro_user ON viagem_passageiros(user_id);""")
+
         await conn.execute("""CREATE TABLE IF NOT EXISTS tripulacoes (id BIGSERIAL PRIMARY KEY, nome TEXT UNIQUE NOT NULL, capitao_user_id BIGINT NOT NULL, reputacao BIGINT NOT NULL DEFAULT 0, criado_em TIMESTAMPTZ DEFAULT NOW());""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS membros_tripulacao (tripulacao_id BIGINT REFERENCES tripulacoes(id) ON DELETE CASCADE, user_id BIGINT UNIQUE NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, cargo TEXT NOT NULL DEFAULT 'Tripulante', entrou_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(tripulacao_id,user_id));""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS alcunhas (user_id BIGINT REFERENCES fichas(user_id) ON DELETE CASCADE, alcunha TEXT NOT NULL, motivo TEXT, ativa BOOLEAN DEFAULT TRUE, criada_em TIMESTAMPTZ DEFAULT NOW(), UNIQUE(user_id,alcunha));""")
@@ -2497,11 +2528,69 @@ async def contar_itens_inventario(user_id):
 # VIAGENS / NAVEGAÇÃO PERSISTENTE
 # =========================================================
 async def buscar_viagem_ativa(user_id):
-    return await get_pool().fetchrow("SELECT * FROM viagens WHERE user_id=$1 AND status IN ('viajando','obstaculo') ORDER BY id DESC LIMIT 1;",user_id)
+    return await get_pool().fetchrow("""SELECT v.* FROM viagens v
+        LEFT JOIN viagem_passageiros vp ON vp.viagem_id=v.id
+        WHERE v.status IN ('viajando','obstaculo') AND (v.user_id=$1 OR vp.user_id=$1)
+        ORDER BY v.id DESC LIMIT 1;""",user_id)
 
-async def criar_viagem(user_id, embarcacao_id, origem, destino, canal_id, chegada_em, proximo_evento_em, eventos, suprimentos, desgaste):
-    return await get_pool().fetchrow("""INSERT INTO viagens(user_id,embarcacao_id,origem,destino,canal_id,chegada_em,proximo_evento_em,eventos_restantes,suprimentos_gastos,desgaste)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *;""",user_id,embarcacao_id,origem,destino,canal_id,chegada_em,proximo_evento_em,eventos,suprimentos,desgaste)
+async def criar_viagem(user_id, embarcacao_id, origem, destino, canal_id, chegada_em, proximo_evento_em, eventos, suprimentos, desgaste, passageiros=None):
+    db=get_pool(); passageiros=list(dict.fromkeys([int(user_id)]+[int(x) for x in (passageiros or [])]))
+    async with db.acquire() as c:
+        async with c.transaction():
+            v=await c.fetchrow("""INSERT INTO viagens(user_id,embarcacao_id,origem,destino,canal_id,chegada_em,proximo_evento_em,eventos_restantes,suprimentos_gastos,desgaste)
+                VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *;""",user_id,embarcacao_id,origem,destino,canal_id,chegada_em,proximo_evento_em,eventos,suprimentos,desgaste)
+            for uid in passageiros:
+                await c.execute("INSERT INTO viagem_passageiros(viagem_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING",v['id'],uid)
+            return v
+
+async def criar_plano_viagem(proprietario_id, embarcacao_id, origem, destino, canal_id, vagas):
+    db=get_pool()
+    async with db.acquire() as c:
+        async with c.transaction():
+            if await c.fetchrow("SELECT 1 FROM planos_viagem WHERE proprietario_id=$1 AND status='embarque'",proprietario_id): return None
+            if await c.fetchrow("SELECT 1 FROM embarques_viagem e JOIN planos_viagem p ON p.id=e.plano_id WHERE e.user_id=$1 AND p.status='embarque'",proprietario_id): return None
+            p=await c.fetchrow("INSERT INTO planos_viagem(proprietario_id,embarcacao_id,origem,destino,canal_id,vagas) VALUES($1,$2,$3,$4,$5,$6) RETURNING *",proprietario_id,embarcacao_id,origem,destino,canal_id,int(vagas))
+            await c.execute("INSERT INTO embarques_viagem(plano_id,user_id) VALUES($1,$2)",p['id'],proprietario_id)
+            return p
+
+async def buscar_plano_viagem_user(user_id):
+    return await get_pool().fetchrow("""SELECT p.* FROM planos_viagem p JOIN embarques_viagem e ON e.plano_id=p.id
+        WHERE e.user_id=$1 AND p.status='embarque' ORDER BY p.id DESC LIMIT 1""",user_id)
+
+async def buscar_plano_viagem_canal(canal_id):
+    return await get_pool().fetchrow("SELECT * FROM planos_viagem WHERE canal_id=$1 AND status='embarque' ORDER BY id DESC LIMIT 1",canal_id)
+
+async def listar_embarques(plano_id):
+    return await get_pool().fetch("SELECT e.*,f.nome FROM embarques_viagem e JOIN fichas f ON f.user_id=e.user_id WHERE e.plano_id=$1 ORDER BY e.embarcou_em",plano_id)
+
+async def embarcar_plano(plano_id,user_id):
+    db=get_pool()
+    async with db.acquire() as c:
+        async with c.transaction():
+            p=await c.fetchrow("SELECT * FROM planos_viagem WHERE id=$1 AND status='embarque' FOR UPDATE",plano_id)
+            if not p:return False,'Embarque encerrado.'
+            outro=await c.fetchrow("SELECT 1 FROM embarques_viagem e JOIN planos_viagem p ON p.id=e.plano_id WHERE e.user_id=$1 AND p.status='embarque'",user_id)
+            if outro:return False,'Você já está em outro embarque aberto.'
+            qtd=await c.fetchval("SELECT COUNT(*) FROM embarques_viagem WHERE plano_id=$1",plano_id)
+            if qtd>=p['vagas']:return False,'A embarcação já atingiu o número definido para esta viagem.'
+            try: await c.execute("INSERT INTO embarques_viagem(plano_id,user_id) VALUES($1,$2)",plano_id,user_id)
+            except Exception:return False,'Você já está em outro embarque ou nesta viagem.'
+            return True,'Embarque confirmado.'
+
+async def desembarcar_plano(user_id):
+    p=await buscar_plano_viagem_user(user_id)
+    if not p:return False
+    if p['proprietario_id']==user_id:return False
+    await get_pool().execute("DELETE FROM embarques_viagem WHERE plano_id=$1 AND user_id=$2",p['id'],user_id); return True
+
+async def cancelar_plano_viagem(proprietario_id):
+    return await get_pool().fetchrow("UPDATE planos_viagem SET status='cancelado' WHERE proprietario_id=$1 AND status='embarque' RETURNING *",proprietario_id)
+
+async def fechar_plano_viagem(plano_id):
+    return await get_pool().fetchrow("UPDATE planos_viagem SET status='partiu' WHERE id=$1 AND status='embarque' RETURNING *",plano_id)
+
+async def passageiros_viagem(viagem_id):
+    return await get_pool().fetch("SELECT vp.user_id,f.nome FROM viagem_passageiros vp JOIN fichas f ON f.user_id=vp.user_id WHERE vp.viagem_id=$1",viagem_id)
 
 async def viagens_pendentes():
     return await get_pool().fetch("SELECT * FROM viagens WHERE status IN ('viajando','obstaculo') ORDER BY chegada_em;")
@@ -2540,7 +2629,10 @@ async def concluir_viagem(viagem_id):
             if v['status']=='obstaculo':return None
             await c.execute("UPDATE viagens SET status='concluida',atualizado_em=NOW() WHERE id=$1;",viagem_id)
             await c.execute("UPDATE embarcacoes SET localizacao=$2,integridade_atual=GREATEST(0,integridade_atual-$3),atualizado_em=NOW() WHERE id=$1;",v['embarcacao_id'],v['destino'],v['desgaste'])
-            await c.execute("INSERT INTO localizacoes_jogador(user_id,localizacao,area,atualizado_em) VALUES($1,$2,NULL,NOW()) ON CONFLICT(user_id) DO UPDATE SET localizacao=EXCLUDED.localizacao,area=NULL,atualizado_em=NOW();",v['user_id'],v['destino'])
+            passageiros=await c.fetch("SELECT user_id FROM viagem_passageiros WHERE viagem_id=$1",viagem_id)
+            ids={int(v['user_id'])}|{int(x['user_id']) for x in passageiros}
+            for uid in ids:
+                await c.execute("INSERT INTO localizacoes_jogador(user_id,localizacao,area,atualizado_em) VALUES($1,$2,NULL,NOW()) ON CONFLICT(user_id) DO UPDATE SET localizacao=EXCLUDED.localizacao,area=NULL,atualizado_em=NOW();",uid,v['destino'])
             return v
 
 async def danificar_embarcacao(embarcacao_id,quantidade):
@@ -2749,3 +2841,23 @@ async def sorteios_encerrar(): return await get_pool().fetch("SELECT * FROM sort
 async def sorteios_abertos(): return await get_pool().fetch("SELECT * FROM sorteios_diarios WHERE status='aberto' AND encerra_em>NOW()")
 async def participantes_sorteio(sid): return await get_pool().fetch("SELECT user_id FROM participantes_sorteio WHERE sorteio_id=$1",sid)
 async def encerrar_sorteio(sid,uid): return await get_pool().execute("UPDATE sorteios_diarios SET status='encerrado',vencedor_user_id=$2 WHERE id=$1",sid,uid)
+
+async def boss_rp_ativo_usuario(user_id):
+    return await get_pool().fetchrow("SELECT * FROM bosses_rp_ativos WHERE user_id=$1 AND status='ativo' ORDER BY id DESC LIMIT 1",int(user_id))
+
+async def remover_membro_tripulacao(tid,uid):
+    return await get_pool().execute("DELETE FROM membros_tripulacao WHERE tripulacao_id=$1 AND user_id=$2 AND cargo<>'Capitão'",int(tid),int(uid))
+
+async def definir_cargo_tripulacao(tid,uid,cargo):
+    return await get_pool().execute("UPDATE membros_tripulacao SET cargo=$3 WHERE tripulacao_id=$1 AND user_id=$2 AND cargo<>'Capitão'",int(tid),int(uid),str(cargo)[:40])
+
+async def transferir_capitania(tid,capitao_atual,novo):
+    db=get_pool()
+    async with db.acquire() as c:
+        async with c.transaction():
+            t=await c.fetchrow("SELECT * FROM tripulacoes WHERE id=$1 AND capitao_user_id=$2 FOR UPDATE",int(tid),int(capitao_atual))
+            if not t:return False
+            if not await c.fetchrow("SELECT 1 FROM membros_tripulacao WHERE tripulacao_id=$1 AND user_id=$2",int(tid),int(novo)):return False
+            await c.execute("UPDATE membros_tripulacao SET cargo='Tripulante' WHERE tripulacao_id=$1 AND user_id=$2",int(tid),int(capitao_atual))
+            await c.execute("UPDATE membros_tripulacao SET cargo='Capitão' WHERE tripulacao_id=$1 AND user_id=$2",int(tid),int(novo))
+            await c.execute("UPDATE tripulacoes SET capitao_user_id=$2 WHERE id=$1",int(tid),int(novo)); return True
