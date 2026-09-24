@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 from openai import AsyncOpenAI
 
-from database.database import buscar_viagem_ativa, buscar_treinamento_ativo, listar_subordinados
+from database.database import buscar_viagem_ativa, buscar_treinamento_ativo, listar_subordinados, evento_ativo_usuario, forma_ativa
 from cogs.npc_profiles import NPC_PROFILES, get_profile, profile_for_narrator, format_profile_for_narrator
 
 from database.database import (
@@ -306,12 +306,14 @@ class Narrador(commands.Cog):
             estado = await buscar_localizacao_jogador(p["user_id"])
             if ficha:
                 papel = "JOGADOR DA AÇÃO ATUAL" if p["user_id"] == autor_id else "OUTRO PLAYER PRESENTE"
+                forma = await forma_ativa(p["user_id"])
+                forma_txt = (f" | Forma ativa={forma['nome']} (+{forma['bonus_forca']}% Força, +{forma['bonus_resistencia']}% Resistência, +{forma['bonus_velocidade']}% Velocidade; {forma['capacidades'] or 'sem capacidade adicional'})" if forma else "")
                 linhas.append(
                     f"- {papel}: {ficha['nome']} (user_id={p['user_id']}) | "
                     f"Facção={ficha['faccao']} | Força={ficha['forca']} | "
                     f"Resistência={ficha['resistencia']} | Velocidade={ficha['velocidade']} | "
                     f"Akuma={ficha['akuma']} | Estado={(estado['estado'] if estado and 'estado' in estado else 'livre')} | "
-                    f"Local={(estado['localizacao'] if estado else 'desconhecido')}"
+                    f"Local={(estado['localizacao'] if estado else 'desconhecido')}{forma_txt}"
                 )
                 try:
                     subs = await listar_subordinados(p["user_id"])
@@ -556,6 +558,12 @@ Use [ENCERRAR_SESSAO] somente se toda a narração também terminou."""
             return True, None, None
 
         atual = await buscar_localizacao_jogador(ctx.author.id)
+
+        # Eventos globais/Bosses são instâncias não-canônicas. O tópico ignora somente
+        # a trava física do canal, sem alterar a localização persistente do personagem.
+        evento = await evento_ativo_usuario(ctx.author.id)
+        if evento and evento['thread_id'] and int(evento['thread_id']) == int(getattr(ctx.channel,'id',0)):
+            return True, local_canal, atual
 
         # Durante uma viagem persistente, o personagem está em alto-mar.
         # O Narrador pode continuar cenas sem transformar o canal em teleporte.
