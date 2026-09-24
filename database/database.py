@@ -698,6 +698,8 @@ async def criar_tabelas():
                 descoberto_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(user_id,localizacao,chave)
             );
         """)
+        await conn.execute("""CREATE TABLE IF NOT EXISTS cooldowns_gameplay (user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, chave TEXT NOT NULL, disponivel_em TIMESTAMPTZ NOT NULL, atualizado_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(user_id,chave));""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS formas_personagem (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, nome TEXT NOT NULL, bonus_forca INTEGER NOT NULL DEFAULT 0, bonus_resistencia INTEGER NOT NULL DEFAULT 0, bonus_velocidade INTEGER NOT NULL DEFAULT 0, capacidades TEXT, requisitos TEXT, ativa BOOLEAN NOT NULL DEFAULT FALSE, desbloqueada BOOLEAN NOT NULL DEFAULT TRUE, criado_em TIMESTAMPTZ DEFAULT NOW(), UNIQUE(user_id,nome));""")
 
         # =================================================
         # GARANTIR CARTEIRA PARA FICHAS ANTIGAS
@@ -2656,3 +2658,17 @@ async def definir_hp_evento(evento_id,hp):
 async def candidatos_cacada():
     return await get_pool().fetch("""SELECT f.user_id,f.nome,f.reputacao,l.localizacao FROM fichas f LEFT JOIN localizacoes_jogador l ON l.user_id=f.user_id
         WHERE f.reputacao>=500 AND NOT EXISTS(SELECT 1 FROM cacadas_ativas c WHERE c.alvo_user_id=f.user_id AND c.status='ativa') ORDER BY f.reputacao DESC LIMIT 10;""")
+
+
+async def buscar_cooldown(user_id,chave): return await get_pool().fetchrow("SELECT * FROM cooldowns_gameplay WHERE user_id=$1 AND chave=$2;",user_id,chave)
+async def definir_cooldown(user_id,chave,disponivel_em): return await get_pool().execute("INSERT INTO cooldowns_gameplay(user_id,chave,disponivel_em) VALUES($1,$2,$3) ON CONFLICT(user_id,chave) DO UPDATE SET disponivel_em=EXCLUDED.disponivel_em,atualizado_em=NOW();",user_id,chave,disponivel_em)
+async def incrementar_especializacao_direto(user_id,nome,quantidade): return await get_pool().fetchrow("UPDATE especializacoes SET porcentagem=LEAST(limite,porcentagem+$3) WHERE user_id=$1 AND LOWER(nome)=LOWER($2) RETURNING *;",user_id,nome,int(quantidade))
+async def liberar_forma(user_id,nome,bf=0,br=0,bv=0,capacidades='',requisitos=''): return await get_pool().fetchrow("INSERT INTO formas_personagem(user_id,nome,bonus_forca,bonus_resistencia,bonus_velocidade,capacidades,requisitos) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(user_id,nome) DO UPDATE SET bonus_forca=EXCLUDED.bonus_forca,bonus_resistencia=EXCLUDED.bonus_resistencia,bonus_velocidade=EXCLUDED.bonus_velocidade,capacidades=EXCLUDED.capacidades,requisitos=EXCLUDED.requisitos,desbloqueada=TRUE RETURNING *;",user_id,nome,int(bf),int(br),int(bv),capacidades,requisitos)
+async def listar_formas(user_id): return await get_pool().fetch("SELECT * FROM formas_personagem WHERE user_id=$1 AND desbloqueada=TRUE ORDER BY id;",user_id)
+async def forma_ativa(user_id): return await get_pool().fetchrow("SELECT * FROM formas_personagem WHERE user_id=$1 AND ativa=TRUE LIMIT 1;",user_id)
+async def ativar_forma(user_id,nome):
+    async with get_pool().acquire() as c:
+        async with c.transaction():
+            await c.execute("UPDATE formas_personagem SET ativa=FALSE WHERE user_id=$1;",user_id)
+            return await c.fetchrow("UPDATE formas_personagem SET ativa=TRUE WHERE user_id=$1 AND LOWER(nome)=LOWER($2) AND desbloqueada=TRUE RETURNING *;",user_id,nome)
+async def desativar_forma(user_id): return await get_pool().execute("UPDATE formas_personagem SET ativa=FALSE WHERE user_id=$1;",user_id)
