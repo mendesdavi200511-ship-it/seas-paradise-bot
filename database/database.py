@@ -27,7 +27,8 @@ async def conectar_banco():
     _pool = await asyncpg.create_pool(
         DATABASE_URL,
         min_size=1,
-        max_size=5
+        max_size=max(5, int(os.getenv('DB_POOL_MAX', '20'))),
+        command_timeout=float(os.getenv('DB_COMMAND_TIMEOUT', '30'))
     )
 
     await criar_tabelas()
@@ -700,6 +701,26 @@ async def criar_tabelas():
         """)
         await conn.execute("""CREATE TABLE IF NOT EXISTS cooldowns_gameplay (user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, chave TEXT NOT NULL, disponivel_em TIMESTAMPTZ NOT NULL, atualizado_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(user_id,chave));""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS formas_personagem (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, nome TEXT NOT NULL, bonus_forca INTEGER NOT NULL DEFAULT 0, bonus_resistencia INTEGER NOT NULL DEFAULT 0, bonus_velocidade INTEGER NOT NULL DEFAULT 0, capacidades TEXT, requisitos TEXT, ativa BOOLEAN NOT NULL DEFAULT FALSE, desbloqueada BOOLEAN NOT NULL DEFAULT TRUE, criado_em TIMESTAMPTZ DEFAULT NOW(), UNIQUE(user_id,nome));""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS tripulacoes (id BIGSERIAL PRIMARY KEY, nome TEXT UNIQUE NOT NULL, capitao_user_id BIGINT NOT NULL, reputacao BIGINT NOT NULL DEFAULT 0, criado_em TIMESTAMPTZ DEFAULT NOW());""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS membros_tripulacao (tripulacao_id BIGINT REFERENCES tripulacoes(id) ON DELETE CASCADE, user_id BIGINT UNIQUE NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, cargo TEXT NOT NULL DEFAULT 'Tripulante', entrou_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(tripulacao_id,user_id));""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS alcunhas (user_id BIGINT REFERENCES fichas(user_id) ON DELETE CASCADE, alcunha TEXT NOT NULL, motivo TEXT, ativa BOOLEAN DEFAULT TRUE, criada_em TIMESTAMPTZ DEFAULT NOW(), UNIQUE(user_id,alcunha));""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS prisoes (user_id BIGINT PRIMARY KEY REFERENCES fichas(user_id) ON DELETE CASCADE, local TEXT NOT NULL, motivo TEXT, status TEXT NOT NULL DEFAULT 'preso', preso_em TIMESTAMPTZ DEFAULT NOW(), execucao_em TIMESTAMPTZ);""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS organizacoes (id BIGSERIAL PRIMARY KEY, nome TEXT UNIQUE NOT NULL, tipo TEXT NOT NULL, lider_user_id BIGINT, criado_em TIMESTAMPTZ DEFAULT NOW());""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS membros_organizacao (organizacao_id BIGINT REFERENCES organizacoes(id) ON DELETE CASCADE, user_id BIGINT UNIQUE NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, cargo TEXT NOT NULL DEFAULT 'Membro', entrou_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(organizacao_id,user_id));""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS akumas_encontradas (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, item_id TEXT NOT NULL, nome TEXT NOT NULL, tipo TEXT NOT NULL, encontrada_em TIMESTAMPTZ DEFAULT NOW(), expira_em TIMESTAMPTZ NOT NULL, consumida BOOLEAN DEFAULT FALSE);""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS execucoes_diarias (chave TEXT PRIMARY KEY, executado_em TIMESTAMPTZ DEFAULT NOW());""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS sorteios_diarios (id BIGSERIAL PRIMARY KEY, premio TEXT NOT NULL, valor INTEGER NOT NULL DEFAULT 0, mensagem_id BIGINT, encerra_em TIMESTAMPTZ NOT NULL, status TEXT DEFAULT 'aberto', vencedor_user_id BIGINT);""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS participantes_sorteio (sorteio_id BIGINT REFERENCES sorteios_diarios(id) ON DELETE CASCADE, user_id BIGINT NOT NULL, PRIMARY KEY(sorteio_id,user_id));""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS bosses_rp_ativos (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, boss_nome TEXT NOT NULL, localizacao TEXT NOT NULL, rank TEXT NOT NULL, hp_max INTEGER NOT NULL, hp_atual INTEGER NOT NULL, falhas INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'ativo', iniciado_em TIMESTAMPTZ DEFAULT NOW(), finalizado_em TIMESTAMPTZ);""")
+        await conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_boss_rp_user_ativo ON bosses_rp_ativos(user_id) WHERE status='ativo';""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS recompensas_npc_marcante (user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, npc_nome TEXT NOT NULL, instancia TEXT NOT NULL DEFAULT 'mundo', recebido_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(user_id,npc_nome,instancia));""")
+        await conn.execute("""CREATE INDEX IF NOT EXISTS idx_boss_rp_user_status ON bosses_rp_ativos(user_id,status);""")
+        await conn.execute("""CREATE INDEX IF NOT EXISTS idx_sorteios_status_fim ON sorteios_diarios(status,encerra_em);""")
+        await conn.execute("""CREATE INDEX IF NOT EXISTS idx_viagens_status_evento ON viagens(status,proximo_evento_em,chegada_em);""")
+        await conn.execute("""CREATE INDEX IF NOT EXISTS idx_treinos_status_fim ON treinamentos(status,fim_em);""")
+        await conn.execute("""CREATE INDEX IF NOT EXISTS idx_eventos_globais_status_expira ON eventos_globais(status,expira_em);""")
+
+
 
         # =================================================
         # GARANTIR CARTEIRA PARA FICHAS ANTIGAS
@@ -2672,3 +2693,59 @@ async def ativar_forma(user_id,nome):
             await c.execute("UPDATE formas_personagem SET ativa=FALSE WHERE user_id=$1;",user_id)
             return await c.fetchrow("UPDATE formas_personagem SET ativa=TRUE WHERE user_id=$1 AND LOWER(nome)=LOWER($2) AND desbloqueada=TRUE RETURNING *;",user_id,nome)
 async def desativar_forma(user_id): return await get_pool().execute("UPDATE formas_personagem SET ativa=FALSE WHERE user_id=$1;",user_id)
+
+
+# =========================================================
+# SISTEMAS FINAIS — SOCIAL / AKUMA / PRISÃO / ORGANIZAÇÕES
+# =========================================================
+async def criar_tripulacao(nome,capitao):
+    db=get_pool()
+    async with db.acquire() as c:
+        async with c.transaction():
+            if await c.fetchrow("SELECT 1 FROM membros_tripulacao WHERE user_id=$1",capitao): return None
+            r=await c.fetchrow("INSERT INTO tripulacoes(nome,capitao_user_id) VALUES($1,$2) ON CONFLICT(nome) DO NOTHING RETURNING *",nome,capitao)
+            if not r:return None
+            await c.execute("INSERT INTO membros_tripulacao(tripulacao_id,user_id,cargo) VALUES($1,$2,'Capitão')",r['id'],capitao); return r
+async def buscar_tripulacao_nome(nome): return await get_pool().fetchrow("SELECT * FROM tripulacoes WHERE LOWER(nome)=LOWER($1)",nome)
+async def buscar_tripulacao_user(uid): return await get_pool().fetchrow("SELECT t.*,m.cargo FROM tripulacoes t JOIN membros_tripulacao m ON m.tripulacao_id=t.id WHERE m.user_id=$1",uid)
+async def entrar_tripulacao(tid,uid): return await get_pool().execute("INSERT INTO membros_tripulacao(tripulacao_id,user_id) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING",tid,uid)
+async def sair_tripulacao(uid): return await get_pool().execute("DELETE FROM membros_tripulacao WHERE user_id=$1 AND cargo<>'Capitão'",uid)
+async def listar_membros_tripulacao(tid): return await get_pool().fetch("SELECT m.*,f.nome FROM membros_tripulacao m JOIN fichas f ON f.user_id=m.user_id WHERE m.tripulacao_id=$1 ORDER BY m.entrou_em",tid)
+async def registrar_alcunha(uid,nome,motivo): return await get_pool().execute("INSERT INTO alcunhas(user_id,alcunha,motivo) VALUES($1,$2,$3) ON CONFLICT DO NOTHING",uid,nome,motivo)
+async def listar_alcunhas(uid): return await get_pool().fetch("SELECT * FROM alcunhas WHERE user_id=$1 ORDER BY criada_em DESC",uid)
+async def prender(uid,local,motivo): return await get_pool().execute("INSERT INTO prisoes(user_id,local,motivo) VALUES($1,$2,$3) ON CONFLICT(user_id) DO UPDATE SET local=$2,motivo=$3,status='preso',preso_em=NOW(),execucao_em=NULL",uid,local,motivo)
+async def buscar_prisao(uid): return await get_pool().fetchrow("SELECT * FROM prisoes WHERE user_id=$1 AND status IN ('preso','execucao')",uid)
+async def libertar(uid): return await get_pool().execute("UPDATE prisoes SET status='liberto' WHERE user_id=$1",uid)
+async def listar_organizacoes(): return await get_pool().fetch("SELECT * FROM organizacoes ORDER BY nome")
+async def garantir_organizacoes():
+    for n,t in [('Germa 66','Reino/Exército'),('Cipher Pol','Governo Mundial'),('Baroque Works','Organização criminosa'),('Cross Guild','Organização pirata'),('Shichibukai','Título/Organização'),('Yonkou','Poder marítimo'),('Marinha','Governo Mundial'),('Exército Revolucionário','Revolucionária')]:
+        await get_pool().execute("INSERT INTO organizacoes(nome,tipo) VALUES($1,$2) ON CONFLICT(nome) DO NOTHING",n,t)
+async def entrar_organizacao(oid,uid,cargo='Membro'): return await get_pool().execute("INSERT INTO membros_organizacao(organizacao_id,user_id,cargo) VALUES($1,$2,$3) ON CONFLICT(user_id) DO NOTHING",oid,uid,cargo)
+async def organizacao_user(uid): return await get_pool().fetchrow("SELECT o.*,m.cargo FROM organizacoes o JOIN membros_organizacao m ON m.organizacao_id=o.id WHERE m.user_id=$1",uid)
+async def execucao_diaria_feita(chave): return bool(await get_pool().fetchrow("SELECT 1 FROM execucoes_diarias WHERE chave=$1",chave))
+async def marcar_execucao_diaria(chave): return await get_pool().execute("INSERT INTO execucoes_diarias(chave) VALUES($1) ON CONFLICT DO NOTHING",chave)
+async def registrar_akuma_encontrada(uid,item,nome,tipo,expira): return await get_pool().execute("INSERT INTO akumas_encontradas(user_id,item_id,nome,tipo,expira_em) VALUES($1,$2,$3,$4,$5)",uid,item,nome,tipo,expira)
+async def akumas_expiradas(): return await get_pool().fetch("SELECT * FROM akumas_encontradas WHERE consumida=FALSE AND expira_em<=NOW()")
+async def expirar_akuma(i):
+    db=get_pool()
+    async with db.acquire() as c:
+        async with c.transaction():
+            r=await c.fetchrow("SELECT * FROM akumas_encontradas WHERE id=$1 FOR UPDATE",i)
+            if not r or r['consumida']: return False
+            await c.execute("UPDATE inventario SET quantidade=GREATEST(0,quantidade-1) WHERE user_id=$1 AND item_id=$2",r['user_id'],r['item_id'])
+            await c.execute("UPDATE akumas_encontradas SET consumida=TRUE WHERE id=$1",i); return True
+async def transferir_item(origem,destino,item,qtd):
+    db=get_pool(); qtd=int(qtd)
+    async with db.acquire() as c:
+        async with c.transaction():
+            r=await c.fetchrow("SELECT quantidade FROM inventario WHERE user_id=$1 AND item_id=$2 FOR UPDATE",origem,item)
+            if not r or r['quantidade']<qtd:return False
+            await c.execute("UPDATE inventario SET quantidade=quantidade-$3 WHERE user_id=$1 AND item_id=$2",origem,item,qtd)
+            await adicionar_item_inventario(destino,item,qtd,c); return True
+
+async def criar_sorteio(premio,valor,encerra): return await get_pool().fetchrow("INSERT INTO sorteios_diarios(premio,valor,encerra_em) VALUES($1,$2,$3) RETURNING *",premio,int(valor),encerra)
+async def participar_sorteio(sid,uid): return await get_pool().execute("INSERT INTO participantes_sorteio(sorteio_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING",sid,uid)
+async def sorteios_encerrar(): return await get_pool().fetch("SELECT * FROM sorteios_diarios WHERE status='aberto' AND encerra_em<=NOW()")
+async def sorteios_abertos(): return await get_pool().fetch("SELECT * FROM sorteios_diarios WHERE status='aberto' AND encerra_em>NOW()")
+async def participantes_sorteio(sid): return await get_pool().fetch("SELECT user_id FROM participantes_sorteio WHERE sorteio_id=$1",sid)
+async def encerrar_sorteio(sid,uid): return await get_pool().execute("UPDATE sorteios_diarios SET status='encerrado',vencedor_user_id=$2 WHERE id=$1",sid,uid)
