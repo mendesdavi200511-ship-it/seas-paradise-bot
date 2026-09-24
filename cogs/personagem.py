@@ -14,6 +14,7 @@ from database.database import (
     resetar_rolagem_criacao,
     contar_itens_inventario,
     buscar_embarcacao_ativa,
+    listar_formas,
 )
 
 from views.criacao import (
@@ -36,7 +37,30 @@ from views.dominios import (
 from data.profissoes import PROFISSOES
 from data.sistema import atributo_efetivo, rank_por_reputacao, proximo_rank, TALENTOS_AUTOMATICOS, FAMILIAS_VONTADE_D, aplicar_pisos_iniciais
 from data.skills import ESTILOS
+from data.poderes import HAKIS, AKUMA_TIPOS, inferir_tipo
 
+
+
+
+class FichaPoderesView(discord.ui.View):
+    def __init__(self,user_id): super().__init__(timeout=300); self.user_id=user_id
+    @discord.ui.button(label="Transformações / Haki",emoji="✨",style=discord.ButtonStyle.secondary)
+    async def transformacoes(self,interaction,button):
+        specs=await buscar_especializacoes(self.user_id); linhas=[]
+        for x in specs:
+            if x['categoria']=='haki':
+                linhas.append(f"👁️ **{x['nome']} — {x['porcentagem']}% / ∞**")
+                for n,req,d in HAKIS.get(x['nome'],[]): linhas.append(f"{'✅' if x['porcentagem']>=req else '🔒'} **{n}** ({req}%) — {d}")
+        for f in await listar_formas(self.user_id): linhas.append(f"{'🔥' if f['ativa'] else '🔹'} **{f['nome']}** • F +{f['bonus_forca']}% • R +{f['bonus_resistencia']}% • V +{f['bonus_velocidade']}%")
+        await interaction.response.send_message(embed=discord.Embed(title='✨ TRANSFORMAÇÕES & HAKI',description='\n'.join(linhas) or 'Nada desbloqueado.'),ephemeral=True)
+    @discord.ui.button(label="Akuma no Mi",emoji="🍈",style=discord.ButtonStyle.secondary)
+    async def akuma(self,interaction,button):
+        specs=await buscar_especializacoes(self.user_id); linhas=[]
+        for a in specs:
+            if a['categoria'] in ('akuma','akuma no mi'):
+                tipo=inferir_tipo(a['nome']); linhas.append(f"🍈 **{a['nome']}** • {tipo.title()} • **{a['porcentagem']}%**")
+                for n,req,d in AKUMA_TIPOS[tipo]: linhas.append(f"{'✅' if a['porcentagem']>=req else '🔒'} **{n}** ({req}%) — {d}")
+        await interaction.response.send_message(embed=discord.Embed(title='🍈 AKUMA NO MI — SKILLS',description='\n'.join(linhas) or 'Nenhuma Akuma no Mi.'),ephemeral=True)
 
 # =========================================================
 # SEA'S PARADISE
@@ -1563,7 +1587,8 @@ class Personagem(
             embed=await criar_embed_ficha(
                 membro,
                 personagem
-            )
+            ),
+            view=FichaPoderesView(membro.id)
         )
 
 

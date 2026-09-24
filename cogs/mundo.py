@@ -18,6 +18,7 @@ from database.database import (
 
 CANAL_EVENTOS_ID=1552724689485430874
 CANAL_REPORT_ID=1552727936400887839
+CARGO_EVENTOS_ID=1542161536016064544
 CARGO_REPORT_ID=1541858353196695632
 COR=discord.Color.from_rgb(184,139,55)
 COMANDOS_EVENTO={"acao","ação","pronto","combate","resolver","resolvercena","resumo","encerrar","sessao","sessão","desistirevento","eventostatus","report","ajuda","help","comandos"}
@@ -96,7 +97,7 @@ class Mundo(commands.Cog):
         file=None
         if tipo=='boss':
             buf=await self.gerar_imagem_boss(titulo,rank,local); file=discord.File(buf,filename=f'boss_{e["id"]}.png'); emb.set_image(url=f'attachment://boss_{e["id"]}.png')
-        msg=await ch.send(embed=emb,view=EventoView(self,e['id']),file=file)
+        msg=await ch.send(f'<@&{CARGO_EVENTOS_ID}>',embed=emb,view=EventoView(self,e['id']),file=file)
         from database.database import get_pool
         await get_pool().execute('UPDATE eventos_globais SET mensagem_id=$2 WHERE id=$1;',e['id'],msg.id)
         return e

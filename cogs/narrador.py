@@ -8,6 +8,8 @@ from openai import AsyncOpenAI
 
 from database.database import buscar_viagem_ativa, buscar_treinamento_ativo, listar_subordinados, evento_ativo_usuario, forma_ativa
 from cogs.npc_profiles import NPC_PROFILES, get_profile, profile_for_narrator, format_profile_for_narrator
+from data.mundo import BOSS_RANKS
+from database.database import get_pool, adicionar_pontos_atributo, adicionar_pontos_percentuais, adicionar_berries, adicionar_reputacao
 
 from database.database import (
     buscar_ficha,
@@ -1208,6 +1210,7 @@ REGRA DE TAMANHO DA RESPOSTA
 - Se uma viagem/deslocamento for CONCLUÍDO nesta resposta, emita [LOCAL_PLAYER:Localização|Área].
 - Se prisão, libertação, inconsciência, incapacitação, início/fim de combate ou restrições mudarem de fato, emita [ESTADO_PLAYER:estado|custodia|restricoes|sim/nao].
 - Recompensas e alterações numéricas de ficha continuam dependendo do sistema apropriado.
+- Se e SOMENTE SE um NPC marcante for definitivamente derrotado/incapacitado nesta resposta, emita [NPC_DERROTADO:Nome Exato]. Não use para fuga, empate, ferimento ou ameaça.
 - Se a SESSÃO inteira tiver terminado de forma inequívoca (objetivo/conflito encerrado e não há continuação imediata PARA NENHUM participante), termine com [ENCERRAR_SESSAO]. Não use por pausa, silêncio, fim de um único ataque ou porque apenas um jogador terminou sua parte.
 - Se o objetivo for encontrar NPC difícil, progresso acumulado deve aproximar o jogador dele; dificuldade não é invisibilidade infinita.
 - A resposta deve terminar completa. NUNCA termine no meio de uma frase, oração, diálogo ou ação. Se estiver ficando longa, conclua o acontecimento atual em menos parágrafos em vez de cortar a prosa.
@@ -1224,6 +1227,7 @@ REGRA DE TAMANHO DA RESPOSTA
             raise RuntimeError("A OpenAI retornou uma narração vazia.")
 
         morte_player = "[MORTE_PLAYER]" in narracao
+        npcs_derrotados = [x.strip() for x in re.findall(r"\[NPC_DERROTADO:([^\]]+)\]", narracao) if x.strip()]
         encerrar_sessao = "[ENCERRAR_SESSAO]" in narracao
 
         mudanca_local = None
@@ -1251,10 +1255,12 @@ REGRA DE TAMANHO DA RESPOSTA
         narracao = re.sub(r"\[MORTE_PLAYER\]", "", narracao)
         narracao = re.sub(r"\[ENCERRAR_SESSAO\]", "", narracao)
         narracao = re.sub(r"\[LOCAL_PLAYER:[^\]]+\]", "", narracao)
-        narracao = re.sub(r"\[ESTADO_PLAYER:[^\]]+\]", "", narracao).strip()
-        return narracao, morte_player, mudanca_local, mudanca_estado, encerrar_sessao
+        narracao = re.sub(r"\[ESTADO_PLAYER:[^\]]+\]", "", narracao)
+        narracao = re.sub(r"\[NPC_DERROTADO:[^\]]+\]", "", narracao).strip()
+        return narracao, morte_player, mudanca_local, mudanca_estado, encerrar_sessao, npcs_derrotados
 
     @commands.command(name="acao", aliases=["ação"])
+    @commands.max_concurrency(25, per=commands.BucketType.default, wait=True)
     async def acao(self, ctx, *, texto: str):
         ficha = await buscar_ficha(ctx.author.id)
         if not ficha:
@@ -1363,7 +1369,7 @@ REGRA DE TAMANHO DA RESPOSTA
             especializacoes = list(await buscar_especializacoes(ctx.author.id))
             try:
                 async with ctx.typing():
-                    narracao, morte_player, mudanca_local, mudanca_estado, encerrar_sessao_auto = await self.gerar_narracao(
+                    narracao, morte_player, mudanca_local, mudanca_estado, encerrar_sessao_auto, npcs_derrotados = await self.gerar_narracao(
                         ctx, texto, ficha, especializacoes, sessao["id"]
                     )
             except Exception as erro:
@@ -1405,6 +1411,32 @@ REGRA DE TAMANHO DA RESPOSTA
                         f"🔒 Estado persistente de {ficha['nome']}: "
                         f"{mudanca_estado['estado']}."
                     )
+
+
+            # Recompensas de NPCs marcantes: uma vez por personagem/NPC no mundo.
+            # O marcador só é aceito quando o próprio Narrador confirmou derrota consumada.
+            if npcs_derrotados:
+                ranks_npc = {
+                    'morgan':'D','buggy':'C','kuro':'C','don krieg':'B','arlong':'B',
+                    'crocodile':'S','bellamy':'B','enel':'S','rob lucci':'S','gecko moria':'S',
+                    'doflamingo':'SS','kaido':'LENDARIO','big mom':'LENDARIO','charlotte linlin':'LENDARIO'
+                }
+                participantes_reward = await listar_participantes_sessao(sessao['id'], True)
+                for npc_nome in npcs_derrotados:
+                    key=npc_nome.casefold(); rank=next((r for n,r in ranks_npc.items() if n in key), None)
+                    if not rank: continue
+                    cfg=BOSS_RANKS[rank]
+                    for pp in participantes_reward:
+                        uid=pp['user_id']
+                        ganhou=await get_pool().fetchrow(
+                            "INSERT INTO recompensas_npc_marcante(user_id,npc_nome,instancia) VALUES($1,$2,'mundo') ON CONFLICT DO NOTHING RETURNING user_id",uid,npc_nome)
+                        if not ganhou: continue
+                        berries=max(500,cfg['berries'][0]//3); pontos=max(1,cfg['pontos'][0]//8); rep=4+list(BOSS_RANKS).index(rank)*4
+                        await adicionar_berries(uid,berries); await adicionar_pontos_atributo(uid,pontos); await adicionar_reputacao(uid,rep)
+                        try:
+                            membro=ctx.guild.get_member(uid) if ctx.guild else None
+                            await ctx.send(f"🏆 **NPC MARCANTE DERROTADO — {npc_nome}**\n{membro.mention if membro else pp['personagem_nome']}: ฿ {berries:,} • +{pontos} pontos • +{rep} reputação".replace(',', '.'))
+                        except Exception: pass
 
             try:
                 quantidade_memorias = await self.salvar_memorias_da_acao(

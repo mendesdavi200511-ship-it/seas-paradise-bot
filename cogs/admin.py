@@ -18,6 +18,7 @@ from data.classes import CLASSES
 from data.skills import ESTILOS
 from data.profissoes import PROFISSOES
 from data.sistema import RANKS_REPUTACAO, rank_por_reputacao
+from data.poderes import HAKIS
 
 
 # =========================================================
@@ -28,6 +29,7 @@ CATEGORIAS_CATALOGO = {
     "classe": CLASSES,
     "estilo": ESTILOS,
     "profissao": PROFISSOES,
+    "haki": HAKIS,
 }
 
 LIMITES_PADRAO = {
@@ -35,7 +37,7 @@ LIMITES_PADRAO = {
     "estilo": 100,
     "profissao": 200,
     "haki": None,
-    "akuma": 200,
+    "akuma": 300,
     "despertar": 200,
 }
 
@@ -53,6 +55,9 @@ def obter_limite(categoria, nome):
     Profissões podem possuir máximo próprio.
     Ex.: Cientista = 400%.
     """
+
+    if categoria == "haki":
+        return 999999999
 
     if categoria == "profissao":
         dados = PROFISSOES.get(nome)
