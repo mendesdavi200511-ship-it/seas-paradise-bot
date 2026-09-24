@@ -9,6 +9,8 @@ from openai import AsyncOpenAI
 from database.database import buscar_viagem_ativa, buscar_treinamento_ativo, listar_subordinados, evento_ativo_usuario, forma_ativa
 from cogs.npc_profiles import NPC_PROFILES, get_profile, profile_for_narrator, format_profile_for_narrator
 from data.mundo import BOSS_RANKS
+from data.navegacao import normalizar_destino
+from data.combat_rules import COMBAT_LOGIC_RULES
 from database.database import get_pool, adicionar_pontos_atributo, adicionar_pontos_percentuais, adicionar_berries, adicionar_reputacao
 
 from database.database import (
@@ -206,6 +208,9 @@ ESTILO:
 - Cada resposta deve terminar com a situação efetivamente diferente de como começou e com algo concreto ao qual o jogador possa reagir.
 - Não explique estas regras, não use linguagem de assistente de IA e não ofereça opções numeradas.
 """
+
+# A mesma lei de combate vale em cenas normais, PvP, NPCs, eventos e Boss Rank.
+PROMPT_NARRADOR = PROMPT_NARRADOR + "\n\n" + COMBAT_LOGIC_RULES
 
 def chave_cena(ctx):
     return ctx.channel.id
@@ -581,7 +586,15 @@ Use [ENCERRAR_SESSAO] somente se toda a narração também terminou."""
             return True, local_canal, atual
 
         local_real = atual["localizacao"]
-        if local_real.casefold() != local_canal.casefold():
+        # Todos os sistemas usam a mesma normalização de mundo/navegação.
+        # Ex.: o legado "Sabaody Park" e "Sabaody Archipelago" representam o mesmo local macro.
+        real_norm = normalizar_destino(local_real)
+        canal_norm = normalizar_destino(local_canal)
+        if str(local_real).casefold() == "sabaody park":
+            real_norm = "Sabaody Archipelago"
+        if str(local_canal).casefold() == "sabaody park":
+            canal_norm = "Sabaody Archipelago"
+        if str(real_norm).casefold() != str(canal_norm).casefold():
             return False, local_canal, atual
 
         return True, local_canal, atual

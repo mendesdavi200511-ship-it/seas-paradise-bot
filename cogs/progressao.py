@@ -11,204 +11,240 @@ from openai import AsyncOpenAI
 
 from database.database import *
 from data.mundo import BOSS_RANKS
+from data.navegacao import normalizar_destino, LOCAIS
+from data.combat_rules import COMBAT_LOGIC_RULES
 
 RANK_ORDER={'E':0,'D':1,'C':2,'B':3,'A':4,'S':5,'SS':6,'LENDARIO':7}
 RANK_LABEL={'E':'Iniciante','D':'Baixo','C':'Intermediário','B':'Experiente','A':'Elite','S':'Monstruoso','SS':'Extremo','LENDARIO':'Lendário'}
 BOSS_ARCHETYPES=[
-    ('Espadachim Errante','espada, contra-ataques e pressão corpo a corpo'),
-    ('Lutador Brutal','golpes físicos, agarrões e avanço agressivo'),
-    ('Caçador Veloz','mobilidade, fintas e ataques rápidos'),
-    ('Veterano de Combate','defesa disciplinada, leitura de abertura e contra-ataques'),
-    ('Guerreiro Implacável','resistência alta, pressão constante e golpes pesados'),
+    ('Espadachim Errante','espada, contra-ataques e pressão corpo a corpo',(.92,1.00,1.10)),
+    ('Lutador Brutal','golpes físicos, agarrões e avanço agressivo',(1.12,1.08,.84)),
+    ('Caçador Veloz','mobilidade, fintas e ataques rápidos',(.88,.90,1.22)),
+    ('Veterano de Combate','defesa disciplinada, leitura de abertura e contra-ataques',(1.00,1.08,1.00)),
+    ('Guerreiro Implacável','resistência alta, pressão constante e golpes pesados',(1.08,1.18,.82)),
 ]
 BOSS_CD_HOURS=1
 AI_LIMIT=asyncio.Semaphore(max(2,int(os.getenv('BOSS_AI_CONCURRENCY','8'))))
+SEVERITY_FRACTIONS={'nenhum':0.0,'raspao':.03,'leve':.08,'solido':.16,'grave':.28,'critico':.45,'letal':1.0}
+
+CHANNEL_ALIASES={
+    'sabaody':'Sabaody Archipelago','sabaody-park':'Sabaody Archipelago','sabaody-park-rp':'Sabaody Archipelago',
+    'vila-foosha':'Dawn Island','foosha':'Dawn Island','vila-syrup':'Syrup Village','ilhas-conomi':'Conomi Islands','arlong-park':'Conomi Islands',
+}
+NON_LOCATION={'geral','general','chat','bate-papo','comandos','commands','fichas','ficha','regras','rules','off-topic','offtopic','anuncios','anúncios','logs','log','staff','admin','tickets'}
 
 def _fmt(n): return f"{int(n):,}".replace(',', '.')
 def _reward(rank):
     d=BOSS_RANKS[rank]
     return {'berries':random.randint(d['berries'][0],d['berries'][1])//4,'pontos':max(1,random.randint(d['pontos'][0],d['pontos'][1])//6),'pct':1 if rank in ('A','S','SS','LENDARIO') and random.random()<.35 else 0,'rep':3+RANK_ORDER[rank]*4}
 
-def _clamp(v,a,b): return max(a,min(b,v))
-
 def _clean_json(text):
-    text=(text or '').strip()
-    text=re.sub(r'^```(?:json)?\s*|\s*```$','',text,flags=re.I|re.S).strip()
+    text=(text or '').strip(); text=re.sub(r'^```(?:json)?\s*|\s*```$','',text,flags=re.I|re.S).strip()
     a=text.find('{'); b=text.rfind('}')
     if a>=0 and b>a: text=text[a:b+1]
     return json.loads(text)
 
+def _clip(s,n=900):
+    s=(s or '').strip(); return s if len(s)<=n else s[-n:]
+
 class Progressao(commands.Cog):
-    """Boss de progressão não-canônico, mas com combate narrativo/mecânico real."""
+    """Boss Rank: instância não-canônica para progressão, com combate contextual persistente."""
     def __init__(self,bot):
-        self.bot=bot
-        self.client=AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        self.bot=bot; self.client=AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY')); self._locks={}
 
     async def _ativo(self,uid):
         return await get_pool().fetchrow("SELECT * FROM bosses_rp_ativos WHERE user_id=$1 AND status='ativo' ORDER BY id DESC LIMIT 1",uid)
 
+    def _canal_local(self,ctx):
+        nome=getattr(ctx.channel,'name',None)
+        if not nome:return None
+        k=nome.casefold().strip().replace('_','-')
+        if k in NON_LOCATION:return None
+        if k in CHANNEL_ALIASES:return CHANNEL_ALIASES[k]
+        return normalizar_destino(k.replace('-',' '))
+
+    async def _validar_local(self,ctx):
+        canal=self._canal_local(ctx)
+        if not canal:return True,None,None
+        estado=await buscar_localizacao_jogador(ctx.author.id)
+        if not estado or not estado['localizacao']:
+            return False,canal,estado
+        atual=normalizar_destino(estado['localizacao'])
+        # legado: o Narrador antigo chamava a área de Sabaody Park.
+        if str(estado['localizacao']).casefold()=='sabaody park': atual='Sabaody Archipelago'
+        return str(atual).casefold()==str(canal).casefold(),canal,estado
+
     async def _stats_player(self,uid,ficha):
         forma=await forma_ativa(uid)
         bf=int(forma['bonus_forca']) if forma else 0; br=int(forma['bonus_resistencia']) if forma else 0; bv=int(forma['bonus_velocidade']) if forma else 0
-        return {
-            'forca':max(1,round(int(ficha['forca'])*(1+bf/100))),
-            'resistencia':max(1,round(int(ficha['resistencia'])*(1+br/100))),
-            'velocidade':max(1,round(int(ficha['velocidade'])*(1+bv/100))),
-            'forma':forma,
-        }
+        return {'forca':max(1,round(int(ficha['forca'])*(1+bf/100))),'resistencia':max(1,round(int(ficha['resistencia'])*(1+br/100))),'velocidade':max(1,round(int(ficha['velocidade'])*(1+bv/100))),'forma':forma}
 
-    async def _interpretar(self,acao,ficha,esp,boss,stats):
+    def _estado_inicial(self,ficha,boss):
+        return (f"{ficha['nome']} e {boss} estão conscientes, livres e em distância de combate neutra. "
+                "Nenhum agarrão, ferimento, cobertura, arma preparada ou vantagem posicional foi estabelecido ainda.")
+
+    async def _resolver_troca(self,acao,ficha,esp,boss,stats):
         dominios='; '.join(f"{x['categoria']}:{x['nome']}={x['porcentagem']}%" for x in esp) or 'nenhum'
         forma=(f"{stats['forma']['nome']} — {stats['forma']['capacidades']}" if stats['forma'] else 'nenhuma')
-        prompt=f"""Você é o árbitro de UMA troca de combate de RPG One Piece. NÃO decide dano nem vitória: só interpreta a declaração e escolhe uma reação plausível do Boss.
-Ação literal do player: {acao}
-Player: {ficha['nome']} | Força {stats['forca']} | Resistência {stats['resistencia']} | Velocidade {stats['velocidade']} | Akuma {ficha['akuma']} | Forma ativa {forma}
-Domínios/skills disponíveis: {dominios}
-Boss: {boss['boss_nome']} | Rank {boss['rank']} | estilo {boss['boss_estilo'] or 'combatente equilibrado'}
+        estado=boss['estado_contexto'] or self._estado_inicial(ficha,boss['boss_nome'])
+        hist=boss['historico_contexto'] or 'Nenhuma troca anterior.'
+        bf=int(boss['boss_forca'] or BOSS_RANKS[boss['rank']]['attr']); br=int(boss['boss_resistencia'] or BOSS_RANKS[boss['rank']]['attr']); bv=int(boss['boss_velocidade'] or BOSS_RANKS[boss['rank']]['attr'])
+        prompt=f'''Você é o ÁRBITRO DE COMBATE do Sea's Paradise. Resolva UMA troca viva e causal. Não seja um gerador de acerto aleatório.
 
-REGRAS:
-- Olhar, falar, provocar, analisar, sacar arma, preparar postura ou carregar técnica NÃO é ataque.
-- Não conceda técnica/poder que não apareça no contexto do player.
-- Se houver ataque, descreva somente a tentativa, nunca diga que acertou antes do motor.
-- O Boss tem iniciativa própria e pode atacar, defender, preparar ou observar; não precisa esperar ser atacado.
-- Responda SOMENTE JSON válido, sem markdown:
-{{"intencao":"ataque|defesa|observacao|preparo|movimento|fala|outro","descricao_player":"frase curta fiel à ação","intensidade":1.0,"boss_intencao":"ataque|defesa|preparo|observacao","boss_descricao":"frase curta da tentativa/reação do boss"}}
-intensidade entre 0.75 e 1.20."""
+{COMBAT_LOGIC_RULES}
+
+PLAYER: {ficha['nome']}
+Força={stats['forca']} | Resistência={stats['resistencia']} | Velocidade={stats['velocidade']}
+Akuma={ficha['akuma']} | Forma={forma}
+Domínios/capacidades registradas: {dominios}
+
+BOSS: {boss['boss_nome']} | Rank={boss['rank']} | perfil={boss['boss_estilo'] or 'combatente equilibrado'}
+Força={bf} | Resistência={br} | Velocidade={bv}
+
+ESTADO FÍSICO AUTORITATIVO ANTES DA AÇÃO:
+{estado}
+
+HISTÓRICO RECENTE:
+{hist}
+
+DECLARAÇÃO LITERAL DO PLAYER:
+{acao}
+
+TAREFA:
+1. Separe o que o player EXECUTA do resultado que ele tentou impor. Preserve agência, mas não aceite "acertei", "não tomei dano", "ele não consegue" como fato.
+2. Resolva em ordem causal todas as etapas realmente executadas. Use o estado anterior. Se uma etapa depende de outra e a anterior falha, respeite isso.
+3. Decida a reação do Boss somente com movimentos possíveis no estado atual e capacidades plausíveis. Ele pode atacar, defender, escapar, agarrar, usar terreno etc.
+4. Atributos pesam, mas LÓGICA vem primeiro. Explique concretamente como uma diferença de atributo permitiu uma reação; não use rank como trava.
+5. Classifique dano ao Boss e ao player por CONSEQUÊNCIA FÍSICA: nenhum|raspao|leve|solido|grave|critico|letal. "letal" só quando a troca realmente produz condição fatal/incapacitante compatível.
+6. Um tiro limpo em torso sem proteção/resistência especial adequada não pode ser "raspao" só por rank. Uma lâmina bloqueada por armadura/Haki pode ser nenhum/raspao. Natureza do ataque importa.
+7. Produza NOVO ESTADO concreto para o próximo turno: distância, postura, agarrões, armas em mãos/no chão, cobertura, ferimentos e vantagens. Não apague fatos sem resolvê-los.
+8. Narração curta, natural, sem falar em rolagem, fórmula, IA ou "chance".
+
+Responda SOMENTE JSON válido:
+{{
+ "acao_interpretada":"o que o player realmente tentou/executou",
+ "resolucao_player":"resultado concreto da ação do player",
+ "dano_boss":"nenhum|raspao|leve|solido|grave|critico|letal",
+ "reacao_boss":"ação/reação concreta do Boss após/entre as etapas, se possível",
+ "resolucao_boss":"resultado concreto da ação do Boss",
+ "dano_player":"nenhum|raspao|leve|solido|grave|critico|letal",
+ "novo_estado":"estado físico completo e autoritativo após a troca",
+ "resumo_turno":"uma frase factual para memória"
+}}'''
         async with AI_LIMIT:
-            r=await self.client.responses.create(model='gpt-5.6-luna',input=prompt,max_output_tokens=300)
-        try:
-            out=_clean_json(r.output_text)
-            if out.get('intencao') not in {'ataque','defesa','observacao','preparo','movimento','fala','outro'}: raise ValueError
-            if out.get('boss_intencao') not in {'ataque','defesa','preparo','observacao'}: out['boss_intencao']='ataque'
-            out['intensidade']=float(_clamp(float(out.get('intensidade',1)),.75,1.2))
-            return out
-        except Exception:
-            low=acao.lower()
-            ataque=any(w in low for w in ('ataco','golpe','corto','corte','soco','chuto','disparo','perfuro','avanço contra','acerto','estoco'))
-            defesa=any(w in low for w in ('defendo','bloqueio','bloqueio','esquivo','protejo'))
-            intent='ataque' if ataque else ('defesa' if defesa else 'observacao')
-            return {'intencao':intent,'descricao_player':acao[:220],'intensidade':1.0,'boss_intencao':'ataque','boss_descricao':'O Boss procura uma abertura e parte para a ofensiva.'}
+            r=await self.client.responses.create(model='gpt-5.6-luna',input=prompt,max_output_tokens=850)
+        out=_clean_json(r.output_text)
+        for k in ('dano_boss','dano_player'):
+            v=str(out.get(k,'nenhum')).casefold().replace('ã','a').replace('ç','c')
+            aliases={'raspão':'raspao','sólido':'solido','crítico':'critico','nenhum':'nenhum','leve':'leve','grave':'grave','letal':'letal'}
+            v=aliases.get(str(out.get(k,'nenhum')).casefold(),v)
+            if v not in SEVERITY_FRACTIONS:v='nenhum'
+            out[k]=v
+        return out
 
-    def _hit(self,atk_vel,def_vel,focus=0,defending=False):
-        ratio=atk_vel/max(1,def_vel)
-        chance=.58 + (ratio-1)*.18 + min(.12,focus*.04) - (.16 if defending else 0)
-        return random.random() < _clamp(chance,.08,.94)
-
-    def _damage(self,atk_force,def_res,intensity=1.0,defending=False):
-        ratio=atk_force/max(1,def_res)
-        base=max(1,atk_force*.18)
-        scale=_clamp(.65 + ratio*.35,.35,2.25)
-        dmg=base*scale*intensity*random.uniform(.86,1.14)
-        if defending: dmg*=.55
-        return max(1,round(dmg))
+    def _dano_por_severidade(self,severity,hp_max):
+        return max(0,round(int(hp_max)*SEVERITY_FRACTIONS.get(severity,0)))
 
     async def _aplicar_cd(self,uid):
         await definir_cooldown(uid,'boss:progressao_global',datetime.now(timezone.utc)+timedelta(hours=BOSS_CD_HOURS))
 
     @commands.command(name='bosses',aliases=['bosslocal','chefes'])
     async def bosses(self,ctx):
-        e=discord.Embed(title='👹 BOSSES DE PROGRESSÃO',description='Lutas **não-canônicas**, sempre disponíveis para evolução. Não mudam sua localização nem o mundo. Escolha um Rank com `!boss <rank>`.',color=discord.Color.dark_red())
-        for rank,d in BOSS_RANKS.items():
-            e.add_field(name=f'Rank {rank} • {RANK_LABEL.get(rank,rank)}',value=f'❤️ {d["hp"]:,} HP • ⚔️ referência {d["attr"]:,}\n`!boss {rank}`',inline=True)
-        e.set_footer(text='Após encerrar uma luta: 1h de cooldown para iniciar outra.')
+        e=discord.Embed(title='👹 BOSSES DE PROGRESSÃO',description='Lutas **não-canônicas** para evolução. Estão sempre disponíveis, mas só podem ser iniciadas no canal da sua localização atual. Escolha `!boss <rank>`.',color=discord.Color.dark_red())
+        for rank,d in BOSS_RANKS.items():e.add_field(name=f'Rank {rank} • {RANK_LABEL.get(rank,rank)}',value=f'❤️ {d["hp"]:,} HP • ⚔️ referência {d["attr"]:,}\n`!boss {rank}`',inline=True)
+        e.set_footer(text='Após vitória, derrota ou desistência: 1h de cooldown.')
         await ctx.send(embed=e)
 
     @commands.command(name='boss')
     async def boss(self,ctx,*,nome:str):
-        if await self._ativo(ctx.author.id): return await ctx.send('❌ Você já está enfrentando um Boss. Use `!bossacao <ação>` ou `!desistirboss`.')
-        if await buscar_sessao_ativa_usuario(ctx.author.id): return await ctx.send('🎭 Termine sua cena atual antes de iniciar um Boss de progressão.')
-        if await buscar_treinamento_ativo(ctx.author.id) or await buscar_viagem_ativa(ctx.author.id): return await ctx.send('❌ Você não pode iniciar Boss enquanto treina ou viaja.')
-        rank=nome.upper().strip().replace('Á','A')
-        if rank=='LENDÁRIO': rank='LENDARIO'
-        if rank not in BOSS_RANKS: return await ctx.send('❌ Rank inválido. Use `!bosses` e escolha **E, D, C, B, A, S, SS ou LENDARIO**.')
+        ok,canal,estado=await self._validar_local(ctx)
+        if not ok:
+            atual=estado['localizacao'] if estado and estado['localizacao'] else 'não definida'
+            return await ctx.send(f'❌ Você não está neste local.\n📍 Localização atual: **{atual}**\n🗺️ Este canal representa: **{canal}**')
+        if await self._ativo(ctx.author.id):return await ctx.send('❌ Você já está enfrentando um Boss. Use `!bossacao <ação>` ou `!desistirboss`.')
+        if await buscar_sessao_ativa_usuario(ctx.author.id):return await ctx.send('🎭 Termine sua cena atual antes de iniciar um Boss de progressão.')
+        if await buscar_treinamento_ativo(ctx.author.id) or await buscar_viagem_ativa(ctx.author.id):return await ctx.send('❌ Você não pode iniciar Boss enquanto treina ou viaja.')
+        rank=nome.upper().strip().replace('Á','A'); rank='LENDARIO' if rank=='LENDÁRIO' else rank
+        if rank not in BOSS_RANKS:return await ctx.send('❌ Rank inválido. Use `!bosses` e escolha **E, D, C, B, A, S, SS ou LENDARIO**.')
         now=datetime.now(timezone.utc); cd=await buscar_cooldown(ctx.author.id,'boss:progressao_global')
         if cd and cd['disponivel_em']>now:
-            mins=max(1,int((cd['disponivel_em']-now).total_seconds()//60)+1); return await ctx.send(f'⏳ Você acabou uma luta recentemente. Novo Boss em ~**{mins//60}h {mins%60}min**.')
+            mins=max(1,int((cd['disponivel_em']-now).total_seconds()//60)+1);return await ctx.send(f'⏳ Você acabou uma luta recentemente. Novo Boss em ~**{mins//60}h {mins%60}min**.')
         ficha=await buscar_ficha(ctx.author.id); stats=await self._stats_player(ctx.author.id,ficha); d=BOSS_RANKS[rank]
-        hp_player=max(100,round(100+stats['resistencia']*1.5))
-        titulo,estilo=random.choice(BOSS_ARCHETYPES); bn=f'{titulo} • Rank {rank}'
-        row=await get_pool().fetchrow("""INSERT INTO bosses_rp_ativos(user_id,boss_nome,localizacao,rank,hp_max,hp_atual,player_hp_max,player_hp_atual,boss_estilo,turno,player_focus)
-            VALUES($1,$2,$3,$4,$5,$5,$6,$6,$7,1,0) RETURNING *""",ctx.author.id,bn,'Instância não-canônica',rank,d['hp'],hp_player,estilo)
-        e=discord.Embed(title=f'👹 {bn}',description='Combate de progressão **fora do cânone**. É uma luta completa: ações são interpretadas, ações não-ofensivas não causam dano e o Boss reage sozinho.',color=discord.Color.dark_red())
-        e.add_field(name='❤️ Boss',value=f'{row["hp_atual"]}/{row["hp_max"]}',inline=True)
-        e.add_field(name='❤️ Você',value=f'{row["player_hp_atual"]}/{row["player_hp_max"]}',inline=True)
-        e.add_field(name='⚔️ Perfil',value=estilo,inline=False)
-        e.add_field(name='Como lutar',value='`!bossacao <sua ação>`\nVocê pode atacar, defender, observar, preparar técnica, usar seus poderes etc.',inline=False)
+        hp_player=max(100,round(100+stats['resistencia']*1.5)); titulo,estilo,mults=random.choice(BOSS_ARCHETYPES); bn=f'{titulo} • Rank {rank}'
+        bf=max(1,round(d['attr']*mults[0])); br=max(1,round(d['attr']*mults[1])); bv=max(1,round(d['attr']*mults[2]))
+        estado0=self._estado_inicial(ficha,bn)
+        row=await get_pool().fetchrow('''INSERT INTO bosses_rp_ativos(user_id,boss_nome,localizacao,rank,hp_max,hp_atual,player_hp_max,player_hp_atual,boss_estilo,turno,player_focus,boss_forca,boss_resistencia,boss_velocidade,estado_contexto,historico_contexto)
+            VALUES($1,$2,$3,$4,$5,$5,$6,$6,$7,1,0,$8,$9,$10,$11,'') RETURNING *''',ctx.author.id,bn,normalizar_destino(estado['localizacao']) if estado else canal,rank,d['hp'],hp_player,estilo,bf,br,bv,estado0)
+        e=discord.Embed(title=f'👹 {bn}',description='Instância **não-canônica** de progressão, mas a luta segue as mesmas leis físicas/narrativas do Sea\'s Paradise. Rank não decide ação sozinho.',color=discord.Color.dark_red())
+        e.add_field(name='❤️ Condição',value=f'Boss {row["hp_atual"]}/{row["hp_max"]} • Você {row["player_hp_atual"]}/{row["player_hp_max"]}',inline=False)
+        e.add_field(name='⚔️ Perfil',value=estilo,inline=False); e.add_field(name='Como lutar',value='`!bossacao <sua ação>` — descreva livremente o que tenta fazer.',inline=False)
         await ctx.send(embed=e)
 
     @commands.command(name='bossacao',aliases=['bossação'])
     @commands.cooldown(1,3,commands.BucketType.user)
     async def bossacao(self,ctx,*,acao:str):
-        b=await self._ativo(ctx.author.id)
-        if not b:return await ctx.send('❌ Você não está enfrentando um Boss de progressão.')
-        ficha=await buscar_ficha(ctx.author.id); esp=list(await buscar_especializacoes(ctx.author.id)); stats=await self._stats_player(ctx.author.id,ficha); d=BOSS_RANKS[b['rank']]
-        # Compatibilidade com lutas que já estavam ativas antes desta atualização.
-        if b['player_hp_max'] is None or b['player_hp_atual'] is None:
-            hp=max(100,round(100+stats['resistencia']*1.5))
-            b=await get_pool().fetchrow("UPDATE bosses_rp_ativos SET player_hp_max=$2,player_hp_atual=$2,boss_estilo=COALESCE(boss_estilo,'Veterano de Combate') WHERE id=$1 RETURNING *",b['id'],hp)
-        interp=await self._interpretar(acao,ficha,esp,b,stats)
-        p_int=interp['intencao']; boss_int=interp['boss_intencao']; focus=int(b['player_focus'] or 0)
-        boss_hp=int(b['hp_atual']); player_hp=int(b['player_hp_atual']); boss_def=(boss_int=='defesa'); player_def=(p_int=='defesa')
-        lines=[f'⚔️ **Turno {int(b["turno"] or 1)} — {ficha["nome"]} vs. {b["boss_nome"]}**',f'🗣️ *{interp["descricao_player"]}*']
-
-        # Ação do jogador. Somente ataque declarado pode causar dano.
-        if p_int=='ataque':
-            if self._hit(stats['velocidade'],d['attr'],focus,boss_def):
-                dano=self._damage(stats['forca'],d['attr'],interp['intensidade'],boss_def); boss_hp=max(0,boss_hp-dano)
-                lines.append(f'💥 O ataque encontra abertura e causa **{dano}** de dano.')
-                focus=0
-            else:
-                lines.append('💨 O ataque não consegue atingir o Boss nesta troca.')
-                focus=max(0,focus-1)
-        elif p_int=='defesa': lines.append('🛡️ Você assume uma defesa ativa, reduzindo o impacto de um possível contra-ataque.')
-        elif p_int in ('observacao','preparo'):
-            focus=min(3,focus+(2 if p_int=='preparo' else 1)); lines.append(f'👁️ Nenhum dano é causado. Você ganha **Foco {focus}/3** para a próxima ofensiva.')
-        elif p_int=='movimento': lines.append('🏃 Você reposiciona-se; isso não causa dano por si só.')
-        else: lines.append('💬 A ação não é ofensiva, então o HP do Boss permanece intacto.')
-
-        # Se o Boss caiu, não recebe turno fantasma.
-        if boss_hp<=0:
-            await get_pool().execute("UPDATE bosses_rp_ativos SET hp_atual=0,player_hp_atual=$2,player_focus=$3,turno=turno+1 WHERE id=$1",b['id'],player_hp,focus)
-            lines.append(f'❤️ Boss: **0/{b["hp_max"]}** • ❤️ Você: **{player_hp}/{b["player_hp_max"]}**')
-            await ctx.send('\n'.join(lines)); return await self._vitoria(ctx,b)
-
-        # Boss tem iniciativa própria em todo turno.
-        lines.append(f'\n👹 *{interp["boss_descricao"]}*')
-        if boss_int=='ataque':
-            if self._hit(d['attr'],stats['velocidade'],0,player_def):
-                dano_b=self._damage(d['attr'],stats['resistencia'],1.0,player_def); player_hp=max(0,player_hp-dano_b)
-                lines.append(f'💢 O Boss acerta e causa **{dano_b}** de dano em você.')
-            else: lines.append('✨ Você evita/neutraliza a ofensiva do Boss nesta troca.')
-        elif boss_int=='defesa': lines.append('🛡️ O Boss fecha a guarda e prioriza a defesa.')
-        elif boss_int=='preparo': lines.append('⚠️ O Boss prepara uma ação mais perigosa para a próxima abertura.')
-        else: lines.append('👁️ O Boss mede seus movimentos e não ataca nesta troca.')
-
-        await get_pool().execute("UPDATE bosses_rp_ativos SET hp_atual=$2,player_hp_atual=$3,player_focus=$4,turno=turno+1 WHERE id=$1",b['id'],boss_hp,player_hp,focus)
-        lines.append(f'\n❤️ Boss: **{boss_hp}/{b["hp_max"]}** • ❤️ Você: **{player_hp}/{b["player_hp_max"]}**')
-        await ctx.send('\n'.join(lines))
-        if player_hp<=0:
-            await get_pool().execute("UPDATE bosses_rp_ativos SET status='derrota',finalizado_em=NOW() WHERE id=$1 AND status='ativo'",b['id'])
-            await self._aplicar_cd(ctx.author.id)
-            await ctx.send('💀 **DERROTA.** A instância de progressão termina aqui, sem recompensa. Seu personagem não morre no mundo canônico por esta luta.\n⏳ Novo Boss disponível em **1 hora**.')
+        lock=self._locks.setdefault(ctx.author.id,asyncio.Lock())
+        async with lock:
+            b=await self._ativo(ctx.author.id)
+            if not b:return await ctx.send('❌ Você não está enfrentando um Boss de progressão.')
+            ok,canal,estado=await self._validar_local(ctx)
+            if not ok:
+                atual=estado['localizacao'] if estado and estado['localizacao'] else 'não definida'
+                return await ctx.send(f'❌ Sua luta existe, mas você só pode agir no canal da sua localização real.\n📍 **{atual}** • Canal atual: **{canal}**')
+            # A luta nasce no local real e continua vinculada a ele; não pode ser carregada para outro canal após viagem/admin move.
+            real=normalizar_destino(estado['localizacao']) if estado else None
+            salvo=normalizar_destino(b['localizacao']) if b['localizacao']!='Instância não-canônica' else real
+            if real and salvo and str(real).casefold()!=str(salvo).casefold():
+                return await ctx.send(f'❌ Este Boss foi iniciado em **{b["localizacao"]}**. Encerre/desista antes de lutar em outro local.')
+            ficha=await buscar_ficha(ctx.author.id); esp=list(await buscar_especializacoes(ctx.author.id)); stats=await self._stats_player(ctx.author.id,ficha); d=BOSS_RANKS[b['rank']]
+            # migra luta 56 já ativa sem apagar progresso.
+            updates=[]; vals=[]
+            if b['player_hp_max'] is None:
+                hp=max(100,round(100+stats['resistencia']*1.5)); updates += ['player_hp_max=$2','player_hp_atual=$2']; vals=[hp]
+            if b['boss_forca'] is None:
+                base=d['attr']; updates += [f'boss_forca=${len(vals)+2}',f'boss_resistencia=${len(vals)+3}',f'boss_velocidade=${len(vals)+4}']; vals += [base,base,base]
+            if not b['estado_contexto']:
+                updates += [f'estado_contexto=${len(vals)+2}']; vals += [self._estado_inicial(ficha,b['boss_nome'])]
+            if b['localizacao']=='Instância não-canônica' and real:
+                updates += [f'localizacao=${len(vals)+2}']; vals += [real]
+            if updates:
+                q='UPDATE bosses_rp_ativos SET '+','.join(updates)+' WHERE id=$1 RETURNING *'; b=await get_pool().fetchrow(q,b['id'],*vals)
+            try:
+                out=await self._resolver_troca(acao,ficha,esp,b,stats)
+            except Exception as ex:
+                print(f'⚠️ Árbitro Boss falhou: {ex}')
+                return await ctx.send('⚠️ Não consegui resolver esta troca com segurança. **Nada foi alterado na luta.** Tente a ação novamente em alguns segundos.')
+            boss_hp=int(b['hp_atual']); player_hp=int(b['player_hp_atual']); boss_dmg=self._dano_por_severidade(out['dano_boss'],b['hp_max']); player_dmg=self._dano_por_severidade(out['dano_player'],b['player_hp_max'])
+            boss_hp=max(0,boss_hp-boss_dmg); player_hp=max(0,player_hp-player_dmg)
+            resumo=_clip(out.get('resumo_turno') or f"{out.get('resolucao_player','')} {out.get('resolucao_boss','')}",500)
+            hist=_clip((b['historico_contexto'] or '')+f"\nT{b['turno']}: {resumo}",1800)
+            novo=_clip(out.get('novo_estado') or b['estado_contexto'],1400)
+            await get_pool().execute('''UPDATE bosses_rp_ativos SET hp_atual=$2,player_hp_atual=$3,turno=turno+1,estado_contexto=$4,historico_contexto=$5 WHERE id=$1''',b['id'],boss_hp,player_hp,novo,hist)
+            lines=[f'⚔️ **Turno {b["turno"]} — {ficha["nome"]} vs. {b["boss_nome"]}**',f'🗣️ *{out.get("acao_interpretada",acao)}*',f'\n🎬 {out.get("resolucao_player","A ação é resolvida.")}']
+            if boss_dmg:lines.append(f'💥 **{boss_dmg} de condição** removida do Boss ({out["dano_boss"]}).')
+            if out.get('reacao_boss'):lines.append(f'\n👹 *{out["reacao_boss"]}*')
+            if out.get('resolucao_boss'):lines.append(f'🎬 {out["resolucao_boss"]}')
+            if player_dmg:lines.append(f'💢 Você perde **{player_dmg} de condição** ({out["dano_player"]}).')
+            lines.append(f'\n❤️ Boss: **{boss_hp}/{b["hp_max"]}** • ❤️ Você: **{player_hp}/{b["player_hp_max"]}**')
+            await ctx.send('\n'.join(lines))
+            if boss_hp<=0:return await self._vitoria(ctx,b)
+            if player_hp<=0:
+                await get_pool().execute("UPDATE bosses_rp_ativos SET status='derrota',finalizado_em=NOW() WHERE id=$1 AND status='ativo'",b['id']); await self._aplicar_cd(ctx.author.id)
+                await ctx.send('💀 **DERROTA.** A instância termina sem recompensa; isso não mata seu personagem no cânone.\n⏳ Novo Boss em **1 hora**.')
 
     async def _vitoria(self,ctx,b):
         async with get_pool().acquire() as c:
             async with c.transaction():
                 locked=await c.fetchrow("SELECT * FROM bosses_rp_ativos WHERE id=$1 FOR UPDATE",b['id'])
                 if not locked or locked['status']!='ativo' or locked['hp_atual']>0:return
-                r=_reward(locked['rank'])
-                await c.execute("UPDATE bosses_rp_ativos SET status='vitoria',finalizado_em=NOW() WHERE id=$1",b['id'])
-                await c.execute("UPDATE fichas SET berries=berries+$2,pontos_atributo=pontos_atributo+$3,reputacao=reputacao+$4 WHERE user_id=$1",ctx.author.id,r['berries'],r['pontos'],r['rep'])
-                if r['pct']: await c.execute("INSERT INTO pontos_percentuais(user_id,disponiveis) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET disponiveis=pontos_percentuais.disponiveis+EXCLUDED.disponiveis",ctx.author.id,r['pct'])
-        await self._aplicar_cd(ctx.author.id)
-        await ctx.send(f'🏆 **BOSS RANK {b["rank"]} DERROTADO!**\n💰 ฿ {_fmt(r["berries"])}\n📈 +{r["pontos"]} pontos de atributo'+(f' • +{r["pct"]}% disponível' if r['pct'] else '')+f'\n🌍 +{r["rep"]} reputação\n⏳ Próximo Boss em **1 hora**.')
+                r=_reward(locked['rank']); await c.execute("UPDATE bosses_rp_ativos SET status='vitoria',finalizado_em=NOW() WHERE id=$1",b['id']); await c.execute("UPDATE fichas SET berries=berries+$2,pontos_atributo=pontos_atributo+$3,reputacao=reputacao+$4 WHERE user_id=$1",ctx.author.id,r['berries'],r['pontos'],r['rep'])
+                if r['pct']:await c.execute("INSERT INTO pontos_percentuais(user_id,disponiveis) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET disponiveis=pontos_percentuais.disponiveis+EXCLUDED.disponiveis",ctx.author.id,r['pct'])
+        await self._aplicar_cd(ctx.author.id); await ctx.send(f'🏆 **BOSS RANK {b["rank"]} DERROTADO!**\n💰 ฿ {_fmt(r["berries"])}\n📈 +{r["pontos"]} pontos de atributo'+(f' • +{r["pct"]}% disponível' if r['pct'] else '')+f'\n🌍 +{r["rep"]} reputação\n⏳ Próximo Boss em **1 hora**.')
 
     @commands.command(name='desistirboss')
     async def desistirboss(self,ctx):
         b=await self._ativo(ctx.author.id)
         if not b:return await ctx.send('❌ Nenhum Boss de progressão ativo.')
-        await get_pool().execute("UPDATE bosses_rp_ativos SET status='desistiu',finalizado_em=NOW() WHERE id=$1",b['id'])
-        await self._aplicar_cd(ctx.author.id)
-        await ctx.send('🏳️ Confronto encerrado sem recompensa.\n⏳ Novo Boss disponível em **1 hora**.')
+        await get_pool().execute("UPDATE bosses_rp_ativos SET status='desistiu',finalizado_em=NOW() WHERE id=$1",b['id']); await self._aplicar_cd(ctx.author.id); await ctx.send('🏳️ Confronto encerrado sem recompensa.\n⏳ Novo Boss disponível em **1 hora**.')
 
-async def setup(bot): await bot.add_cog(Progressao(bot))
+async def setup(bot):await bot.add_cog(Progressao(bot))
