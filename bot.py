@@ -70,7 +70,8 @@ class SeasParadiseBot(commands.Bot):
         extensoes = [
             "cogs.personagem",
             "cogs.admin",
-            "cogs.narrador"
+            "cogs.narrador",
+            "cogs.economia"
         ]
 
         for extensao in extensoes:
