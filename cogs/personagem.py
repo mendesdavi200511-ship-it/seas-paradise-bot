@@ -12,6 +12,8 @@ from database.database import (
     adicionar_especializacao,
     buscar_rolagem_criacao,
     resetar_rolagem_criacao,
+    contar_itens_inventario,
+    buscar_embarcacao_ativa,
 )
 
 from views.criacao import (
@@ -557,6 +559,15 @@ async def criar_embed_ficha(
             f"฿ "
             f"{formatar_numero(personagem['berries'])}"
         ),
+        inline=True
+    )
+
+    total_itens = await contar_itens_inventario(membro.id)
+    navio_ativo = await buscar_embarcacao_ativa(membro.id)
+    embed.add_field(
+        name="🎒 Inventário",
+        value=(f"**{formatar_numero(total_itens)} itens**\n└ Use `!inventario`"
+               + (f"\n🚢 {navio_ativo['nome']}" if navio_ativo else "")),
         inline=True
     )
 
