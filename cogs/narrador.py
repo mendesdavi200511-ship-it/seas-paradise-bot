@@ -6,6 +6,7 @@ import discord
 from discord.ext import commands
 from openai import AsyncOpenAI
 
+from database.database import buscar_viagem_ativa, buscar_treinamento_ativo
 from cogs.npc_profiles import NPC_PROFILES, get_profile, profile_for_narrator, format_profile_for_narrator
 
 from database.database import (
@@ -549,6 +550,12 @@ Use [ENCERRAR_SESSAO] somente se toda a narração também terminou."""
             return True, None, None
 
         atual = await buscar_localizacao_jogador(ctx.author.id)
+
+        # Durante uma viagem persistente, o personagem está em alto-mar.
+        # O Narrador pode continuar cenas sem transformar o canal em teleporte.
+        viagem = await buscar_viagem_ativa(ctx.author.id)
+        if viagem:
+            return True, local_canal, atual
 
         # Primeira cena do personagem: o canal pode estabelecer o ponto inicial.
         if not atual or not atual["localizacao"]:
@@ -1518,6 +1525,11 @@ REGRA DE TAMANHO DA RESPOSTA
 
     @commands.command(name="iniciar", aliases=["iniciarnarracao", "iniciarnarração"])
     async def iniciar_narracao(self, ctx):
+        treino=await buscar_treinamento_ativo(ctx.author.id)
+        if treino:
+            restante=max(treino['fim_em']-datetime.now(timezone.utc), timedelta(0))
+            minutos=max(0,int(restante.total_seconds()//60))
+            return await ctx.send(f"🏋️ **PERSONAGEM EM TREINAMENTO**\nVocê está treinando **{treino['alvo']}** e não pode iniciar uma cena.\n⏳ Restam aproximadamente **{minutos//60}h {minutos%60}min**.\nUse `!cancelartreino` para abandonar o treino sem receber recompensa.")
         if await buscar_sessao_ativa(ctx.channel.id):
             await ctx.send("🎬 Já existe narração ativa aqui. Use `!sessao` ou `!encerrar`."); return
         ficha=await buscar_ficha(ctx.author.id)
@@ -1542,6 +1554,11 @@ REGRA DE TAMANHO DA RESPOSTA
 
     @commands.command(name="entrar")
     async def entrar_narracao(self,ctx):
+        treino=await buscar_treinamento_ativo(ctx.author.id)
+        if treino:
+            restante=max(treino['fim_em']-datetime.now(timezone.utc), timedelta(0))
+            minutos=max(0,int(restante.total_seconds()//60))
+            return await ctx.send(f"🏋️ **PERSONAGEM EM TREINAMENTO**\nVocê está treinando **{treino['alvo']}** e não pode entrar em uma cena.\n⏳ Restam aproximadamente **{minutos//60}h {minutos%60}min**.\nUse `!cancelartreino` para abandonar o treino sem receber recompensa.")
         s=await buscar_sessao_ativa(ctx.channel.id)
         if not s: await ctx.send("📭 Não há sessão. Use `!iniciar`."); return
         ficha=await buscar_ficha(ctx.author.id)
