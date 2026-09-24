@@ -616,6 +616,38 @@ async def criar_tabelas():
             CREATE UNIQUE INDEX IF NOT EXISTS uq_embarcacao_ativa_proprietario
             ON embarcacoes(proprietario_id) WHERE ativa=TRUE;
         """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS viagens (
+                id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL, embarcacao_id BIGINT NOT NULL,
+                origem TEXT NOT NULL, destino TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'viajando',
+                canal_id BIGINT, inicio_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), chegada_em TIMESTAMPTZ NOT NULL,
+                proximo_evento_em TIMESTAMPTZ, eventos_restantes INTEGER NOT NULL DEFAULT 0,
+                suprimentos_gastos INTEGER NOT NULL DEFAULT 0, desgaste INTEGER NOT NULL DEFAULT 0,
+                criado_em TIMESTAMPTZ DEFAULT NOW(), atualizado_em TIMESTAMPTZ DEFAULT NOW(),
+                FOREIGN KEY(user_id) REFERENCES fichas(user_id) ON DELETE CASCADE,
+                FOREIGN KEY(embarcacao_id) REFERENCES embarcacoes(id) ON DELETE CASCADE
+            );
+        """)
+        await conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_viagem_ativa_user ON viagens(user_id) WHERE status IN ('viajando','obstaculo');""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS rotas_liberadas (user_id BIGINT NOT NULL, destino TEXT NOT NULL, origem TEXT, motivo TEXT, criado_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(user_id,destino), FOREIGN KEY(user_id) REFERENCES fichas(user_id) ON DELETE CASCADE);""")
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS eventos_viagem (
+                id BIGSERIAL PRIMARY KEY, viagem_id BIGINT NOT NULL, titulo TEXT NOT NULL, descricao TEXT NOT NULL,
+                resolvido BOOLEAN NOT NULL DEFAULT FALSE, acao_player TEXT, resultado TEXT,
+                criado_em TIMESTAMPTZ DEFAULT NOW(), resolvido_em TIMESTAMPTZ,
+                FOREIGN KEY(viagem_id) REFERENCES viagens(id) ON DELETE CASCADE
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS treinamentos (
+                id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL, tipo TEXT NOT NULL, alvo TEXT NOT NULL,
+                ganho INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'ativo', canal_id BIGINT,
+                inicio_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), fim_em TIMESTAMPTZ NOT NULL,
+                criado_em TIMESTAMPTZ DEFAULT NOW(), concluido_em TIMESTAMPTZ,
+                FOREIGN KEY(user_id) REFERENCES fichas(user_id) ON DELETE CASCADE
+            );
+        """)
+        await conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_treino_ativo_user ON treinamentos(user_id) WHERE status='ativo';""")
 
         # =================================================
         # GARANTIR CARTEIRA PARA FICHAS ANTIGAS
@@ -1958,6 +1990,19 @@ async def buscar_sessao_ativa(channel_id):
     )
 
 
+async def buscar_sessao_ativa_usuario(user_id):
+    """Retorna a sessão ativa da qual o jogador participa ativamente."""
+    db = get_pool()
+    return await db.fetchrow(
+        """
+        SELECT s.* FROM sessoes_narracao s
+        JOIN participantes_sessao p ON p.sessao_id=s.id
+        WHERE p.user_id=$1 AND p.status='ativo' AND s.status='ativa'
+        ORDER BY s.id DESC LIMIT 1;
+        """, int(user_id)
+    )
+
+
 async def obter_ou_criar_sessao(guild_id, channel_id, localizacao=None, area=None):
     """Uma realidade compartilhada ativa por canal. Não impõe limite de participantes."""
     db = get_pool()
@@ -2373,3 +2418,106 @@ async def reparar_embarcacao(embarcacao_id,quantidade):
 
 async def contar_itens_inventario(user_id):
     return await get_pool().fetchval("SELECT COALESCE(SUM(quantidade),0) FROM inventario WHERE user_id=$1 AND quantidade>0;",user_id)
+
+
+# =========================================================
+# VIAGENS / NAVEGAÇÃO PERSISTENTE
+# =========================================================
+async def buscar_viagem_ativa(user_id):
+    return await get_pool().fetchrow("SELECT * FROM viagens WHERE user_id=$1 AND status IN ('viajando','obstaculo') ORDER BY id DESC LIMIT 1;",user_id)
+
+async def criar_viagem(user_id, embarcacao_id, origem, destino, canal_id, chegada_em, proximo_evento_em, eventos, suprimentos, desgaste):
+    return await get_pool().fetchrow("""INSERT INTO viagens(user_id,embarcacao_id,origem,destino,canal_id,chegada_em,proximo_evento_em,eventos_restantes,suprimentos_gastos,desgaste)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *;""",user_id,embarcacao_id,origem,destino,canal_id,chegada_em,proximo_evento_em,eventos,suprimentos,desgaste)
+
+async def viagens_pendentes():
+    return await get_pool().fetch("SELECT * FROM viagens WHERE status IN ('viajando','obstaculo') ORDER BY chegada_em;")
+
+async def criar_evento_viagem(viagem_id,titulo,descricao):
+    db=get_pool()
+    async with db.acquire() as c:
+        async with c.transaction():
+            ev=await c.fetchrow("INSERT INTO eventos_viagem(viagem_id,titulo,descricao) VALUES($1,$2,$3) RETURNING *;",viagem_id,titulo,descricao)
+            await c.execute("UPDATE viagens SET status='obstaculo', atualizado_em=NOW() WHERE id=$1;",viagem_id)
+            return ev
+
+async def evento_aberto_viagem(viagem_id):
+    return await get_pool().fetchrow("SELECT * FROM eventos_viagem WHERE viagem_id=$1 AND resolvido=FALSE ORDER BY id DESC LIMIT 1;",viagem_id)
+
+async def resolver_evento_viagem(viagem_id,acao,resultado,atraso_min=0,dano=0):
+    db=get_pool()
+    async with db.acquire() as c:
+        async with c.transaction():
+            ev=await c.fetchrow("SELECT * FROM eventos_viagem WHERE viagem_id=$1 AND resolvido=FALSE ORDER BY id DESC LIMIT 1 FOR UPDATE;",viagem_id)
+            if not ev:return None
+            await c.execute("UPDATE eventos_viagem SET resolvido=TRUE,acao_player=$2,resultado=$3,resolvido_em=NOW() WHERE id=$1;",ev['id'],acao,resultado)
+            v=await c.fetchrow("UPDATE viagens SET status='viajando', chegada_em=chegada_em+($2||' minutes')::interval, eventos_restantes=GREATEST(0,eventos_restantes-1), proximo_evento_em=NULL, atualizado_em=NOW() WHERE id=$1 RETURNING *;",viagem_id,int(atraso_min))
+            if dano>0: await c.execute("UPDATE embarcacoes SET integridade_atual=GREATEST(0,integridade_atual-$2),atualizado_em=NOW() WHERE id=$1;",v['embarcacao_id'],int(dano))
+            return v
+
+async def agendar_proximo_evento_viagem(viagem_id,quando):
+    return await get_pool().execute("UPDATE viagens SET proximo_evento_em=$2 WHERE id=$1;",viagem_id,quando)
+
+async def concluir_viagem(viagem_id):
+    db=get_pool()
+    async with db.acquire() as c:
+        async with c.transaction():
+            v=await c.fetchrow("SELECT * FROM viagens WHERE id=$1 FOR UPDATE;",viagem_id)
+            if not v or v['status'] not in ('viajando','obstaculo'):return None
+            if v['status']=='obstaculo':return None
+            await c.execute("UPDATE viagens SET status='concluida',atualizado_em=NOW() WHERE id=$1;",viagem_id)
+            await c.execute("UPDATE embarcacoes SET localizacao=$2,integridade_atual=GREATEST(0,integridade_atual-$3),atualizado_em=NOW() WHERE id=$1;",v['embarcacao_id'],v['destino'],v['desgaste'])
+            await c.execute("INSERT INTO localizacoes_jogador(user_id,localizacao,area,atualizado_em) VALUES($1,$2,NULL,NOW()) ON CONFLICT(user_id) DO UPDATE SET localizacao=EXCLUDED.localizacao,area=NULL,atualizado_em=NOW();",v['user_id'],v['destino'])
+            return v
+
+async def danificar_embarcacao(embarcacao_id,quantidade):
+    return await get_pool().fetchrow("UPDATE embarcacoes SET integridade_atual=GREATEST(0,integridade_atual-$2),atualizado_em=NOW() WHERE id=$1 RETURNING *;",embarcacao_id,int(quantidade))
+
+# =========================================================
+# TREINAMENTOS PERSISTENTES
+# =========================================================
+async def buscar_treinamento_ativo(user_id):
+    return await get_pool().fetchrow("SELECT * FROM treinamentos WHERE user_id=$1 AND status='ativo' ORDER BY id DESC LIMIT 1;",user_id)
+async def criar_treinamento(user_id,tipo,alvo,ganho,canal_id,fim_em):
+    return await get_pool().fetchrow("INSERT INTO treinamentos(user_id,tipo,alvo,ganho,canal_id,fim_em) VALUES($1,$2,$3,$4,$5,$6) RETURNING *;",user_id,tipo,alvo,int(ganho),canal_id,fim_em)
+async def cancelar_treinamento(user_id):
+    return await get_pool().fetchrow(
+        """UPDATE treinamentos SET status='cancelado', concluido_em=NOW()
+           WHERE id=(SELECT id FROM treinamentos WHERE user_id=$1 AND status='ativo' ORDER BY id DESC LIMIT 1)
+           RETURNING *;""", int(user_id)
+    )
+
+async def treinamentos_prontos():
+    return await get_pool().fetch("SELECT * FROM treinamentos WHERE status='ativo' AND fim_em<=NOW() ORDER BY fim_em;")
+async def concluir_treinamento(treino_id):
+    db=get_pool()
+    async with db.acquire() as c:
+        async with c.transaction():
+            t=await c.fetchrow("SELECT * FROM treinamentos WHERE id=$1 AND status='ativo' FOR UPDATE;",treino_id)
+            if not t:return None
+            if t['tipo']=='atributo':
+                col={'forca':'forca','resistencia':'resistencia','velocidade':'velocidade'}.get(t['alvo'])
+                if not col:return None
+                await c.execute(f"UPDATE fichas SET {col}=LEAST(50000,{col}+$1) WHERE user_id=$2;",t['ganho'],t['user_id'])
+            elif t['tipo']=='dominio':
+                await c.execute("UPDATE especializacoes SET porcentagem=LEAST(limite,porcentagem+$1) WHERE user_id=$2 AND LOWER(nome)=LOWER($3);",t['ganho'],t['user_id'],t['alvo'])
+            await c.execute("UPDATE treinamentos SET status='concluido',concluido_em=NOW() WHERE id=$1;",treino_id)
+            return t
+
+async def pagar_reparo_embarcacao(user_id,embarcacao_id,custo):
+    db=get_pool(); custo=int(custo)
+    async with db.acquire() as c:
+        async with c.transaction():
+            f=await c.fetchrow("SELECT berries FROM fichas WHERE user_id=$1 FOR UPDATE;",user_id)
+            if not f or f['berries']<custo:return False
+            n=await c.fetchrow("SELECT * FROM embarcacoes WHERE id=$1 AND proprietario_id=$2 FOR UPDATE;",embarcacao_id,user_id)
+            if not n:return False
+            await c.execute("UPDATE fichas SET berries=berries-$1 WHERE user_id=$2;",custo,user_id)
+            await c.execute("UPDATE embarcacoes SET integridade_atual=integridade_max,atualizado_em=NOW() WHERE id=$1;",embarcacao_id)
+            await registrar_transacao_economia(user_id,'reparo_estaleiro',-custo,None,1,n['nome'],c)
+            return True
+
+async def liberar_rota_especial(user_id,destino,origem=None,motivo="admin"):
+    return await get_pool().execute("INSERT INTO rotas_liberadas(user_id,destino,origem,motivo) VALUES($1,$2,$3,$4) ON CONFLICT(user_id,destino) DO UPDATE SET origem=EXCLUDED.origem,motivo=EXCLUDED.motivo;",user_id,destino,origem,motivo)
+async def rota_especial_liberada(user_id,destino):
+    return await get_pool().fetchval("SELECT EXISTS(SELECT 1 FROM rotas_liberadas WHERE user_id=$1 AND destino=$2);",user_id,destino)
