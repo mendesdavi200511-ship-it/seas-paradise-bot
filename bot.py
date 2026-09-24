@@ -72,7 +72,8 @@ class SeasParadiseBot(commands.Bot):
             "cogs.admin",
             "cogs.narrador",
             "cogs.economia",
-            "cogs.treinamento"
+            "cogs.treinamento",
+            "cogs.mundo"
         ]
 
         for extensao in extensoes:
@@ -192,190 +193,36 @@ async def ping(ctx):
 # COMANDO — AJUDA
 # =========================================================
 
-@bot.command(
-    name="ajuda",
-    aliases=["help", "comandos"]
-)
+@bot.command(name="ajuda", aliases=["help", "comandos"])
 async def ajuda(ctx):
-
-    embed = discord.Embed(
-        title="🏴‍☠️ SEA'S PARADISE — COMANDOS",
-        description=(
-            "Aqui estão os comandos atualmente "
-            "disponíveis no bot.\n\n"
-            "Use **!** antes de cada comando."
-        ),
-        color=discord.Color.blue()
-    )
-
-    # =====================================================
-    # ORGANIZAR COMANDOS POR CATEGORIA
-    # =====================================================
-
-    categorias = {}
-
-    for comando in bot.commands:
-
-        # Comandos ocultos não aparecem
-        if comando.hidden:
-            continue
-
-        # Descobre de qual Cog o comando veio
-        categoria = (
-            comando.cog_name
-            if comando.cog_name
-            else "Geral"
-        )
-
-        if categoria not in categorias:
-
-            categorias[categoria] = []
-
-        # =================================================
-        # ASSINATURA DO COMANDO
-        # =================================================
-
-        assinatura = comando.signature
-
-        if assinatura:
-
-            texto = (
-                f"`!{comando.name} "
-                f"{assinatura}`"
-            )
-
-        else:
-
-            texto = (
-                f"`!{comando.name}`"
-            )
-
-        # =================================================
-        # ALIASES
-        # =================================================
-
-        if comando.aliases:
-
-            aliases = ", ".join(
-                f"!{alias}"
-                for alias in comando.aliases
-            )
-
-            texto += (
-                f"\n↳ Também: `{aliases}`"
-            )
-
-        categorias[
-            categoria
-        ].append(
-            texto
-        )
-
-    # =====================================================
-    # NOMES DAS CATEGORIAS
-    # =====================================================
-
-    nomes_categorias = {
-
-        "Geral":
-            "⚙️ Geral",
-
-        "Personagem":
-            "🏴‍☠️ Personagem",
-
-        "Admin":
-            "👑 Administração"
-
-    }
-
-    # =====================================================
-    # ORDEM DAS CATEGORIAS
-    # =====================================================
-
-    ordem = [
-        "Geral",
-        "Personagem",
-        "Admin"
-    ]
-
-    categorias_ordenadas = []
-
-    # Primeiro categorias conhecidas
-    for categoria in ordem:
-
-        if categoria in categorias:
-
-            categorias_ordenadas.append(
-                categoria
-            )
-
-    # Depois qualquer Cog novo
-    for categoria in categorias:
-
-        if categoria not in categorias_ordenadas:
-
-            categorias_ordenadas.append(
-                categoria
-            )
-
-    # =====================================================
-    # ADICIONAR CATEGORIAS AO EMBED
-    # =====================================================
-
-    for categoria in categorias_ordenadas:
-
-        comandos_lista = categorias[
-            categoria
-        ]
-
-        titulo = nomes_categorias.get(
-            categoria,
-            f"📚 {categoria}"
-        )
-
-        texto = "\n".join(
-            comandos_lista
-        )
-
-        # Discord limita cada field a 1024 caracteres
-        if len(texto) > 1024:
-
-            texto = (
-                texto[:1000]
-                + "\n..."
-            )
-
-        embed.add_field(
-            name=titulo,
-            value=(
-                texto
-                if texto
-                else "Nenhum comando."
-            ),
-            inline=False
-        )
-
-    # =====================================================
-    # TOTAL
-    # =====================================================
-
-    comandos_visiveis = [
-        comando
-        for comando in bot.commands
-        if not comando.hidden
-    ]
-
-    embed.set_footer(
-        text=(
-            "Sea's Paradise • "
-            f"{len(comandos_visiveis)} "
-            "comandos carregados"
-        )
-    )
-
-    await ctx.send(
-        embed=embed
-    )
+    embed=discord.Embed(title="🏴‍☠️ SEA'S PARADISE — GUIA DO JOGADOR",description="Os comandos que você realmente precisa durante a aventura. Use `!` antes do comando.",color=discord.Color.from_rgb(32,104,160))
+    embed.add_field(name="👤 Personagem",value="""`!ficha` — sua ficha e progressão
+`!inventario` — itens e saques
+`!treinar` / `!treinostatus` — treinamento
+`!cancelartreino` — abandonar treino""",inline=False)
+    embed.add_field(name="🎭 Narrativa",value="""`!iniciar` — iniciar cena
+`!entrar` — entrar em cena multiplayer
+`!acao <ação>` — agir
+`!pronto` — combate coletivo
+`!resumo` — resumo da sessão
+`!encerrar` — encerrar cena""",inline=False)
+    embed.add_field(name="🌊 Mundo & Navegação",value="""`!ilha [nome]` — informações da ilha
+`!explorar` — procurar descobertas/tesouros
+`!rotas` / `!viajar <destino>` — navegar
+`!viagemstatus` / `!resolverviagem` — viagem
+`!navio` / `!repararnavio` — embarcação
+`!pescar` — pesca""",inline=False)
+    embed.add_field(name="💰 Economia",value="""`!loja` — comércio local
+`!estaleiro` — comprar embarcação
+`!contratar <função> <nome>` — subordinado
+`!subordinados` — sua equipe""",inline=False)
+    embed.add_field(name="⚔️ Eventos",value="""Use os **botões do mural** para aceitar Missões da Marinha e Bosses.
+`!eventostatus` — evento atual
+`!desistirevento` — desistir (não poderá repetir a instância)
+`!cacadas` — perseguidores ativos""",inline=False)
+    embed.add_field(name="🐛 Suporte",value="`!report <descrição>` — abre um tópico de acompanhamento com a equipe.",inline=False)
+    embed.set_footer(text="Sea's Paradise • o mundo continua mesmo sem staff online")
+    await ctx.send(embed=embed)
 
 
 # =========================================================
