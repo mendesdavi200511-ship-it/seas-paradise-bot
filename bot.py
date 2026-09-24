@@ -71,7 +71,8 @@ class SeasParadiseBot(commands.Bot):
             "cogs.personagem",
             "cogs.admin",
             "cogs.narrador",
-            "cogs.economia"
+            "cogs.economia",
+            "cogs.treinamento"
         ]
 
         for extensao in extensoes:
