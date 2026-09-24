@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 from openai import AsyncOpenAI
 
-from database.database import buscar_viagem_ativa, buscar_treinamento_ativo
+from database.database import buscar_viagem_ativa, buscar_treinamento_ativo, listar_subordinados
 from cogs.npc_profiles import NPC_PROFILES, get_profile, profile_for_narrator, format_profile_for_narrator
 
 from database.database import (
@@ -313,6 +313,12 @@ class Narrador(commands.Cog):
                     f"Akuma={ficha['akuma']} | Estado={(estado['estado'] if estado and 'estado' in estado else 'livre')} | "
                     f"Local={(estado['localizacao'] if estado else 'desconhecido')}"
                 )
+                try:
+                    subs = await listar_subordinados(p["user_id"])
+                    for sub in subs:
+                        linhas.append(f"  - SUBORDINADO NPC AUTÔNOMO de {ficha['nome']}: {sub['nome']} | Função={sub['funcao']} | Rank={sub['rank']} | Lealdade={sub['lealdade']} | Personalidade={sub['personalidade']}. Reaja por conta própria de forma coerente com personalidade, função, perigo e lealdade; não espere ordem para toda reação, mas não controle o player.")
+                except Exception:
+                    pass
             else:
                 linhas.append(
                     f"- PARTICIPANTE SEM FICHA ATIVA: {p['personagem_nome']} (user_id={p['user_id']})"
