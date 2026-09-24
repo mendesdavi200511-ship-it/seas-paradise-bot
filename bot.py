@@ -73,7 +73,9 @@ class SeasParadiseBot(commands.Bot):
             "cogs.narrador",
             "cogs.economia",
             "cogs.treinamento",
-            "cogs.mundo"
+            "cogs.mundo",
+            "cogs.finalizacao",
+            "cogs.progressao"
         ]
 
         for extensao in extensoes:
@@ -197,6 +199,8 @@ async def ping(ctx):
 async def ajuda(ctx):
     embed=discord.Embed(title="🏴‍☠️ SEA'S PARADISE — GUIA DO JOGADOR",description="Os comandos que você realmente precisa durante a aventura. Use `!` antes do comando.",color=discord.Color.from_rgb(32,104,160))
     embed.add_field(name="👤 Personagem",value="""`!ficha` — sua ficha e progressão
+`!poderes` — Haki, Akuma e transformações
+`!manual` — manual completo do RP
 `!inventario` — itens e saques
 `!treinar` / `!treinostatus` — treinamento
 `!cancelartreino` — abandonar treino""",inline=False)
@@ -216,13 +220,22 @@ async def ajuda(ctx):
 `!roubar <alvo>` — tentativa de roubo contra NPC/estabelecimento
 `!formas` / `!transformar <forma>` — transformações desbloqueadas""",inline=False)
     embed.add_field(name="💰 Economia",value="""`!loja` — comércio local
+`!doar <item> @player [qtd]` — doar item
+`!procurar-akuma` — busca diária por Akuma
+`!tripulacao` — tripulações
+`!organizacoes` — organizações
+`!alcunhas` — alcunhas conquistadas
 `!estaleiro` — comprar embarcação
 `!contratar <função> <nome>` — subordinado
 `!subordinados` — sua equipe""",inline=False)
     embed.add_field(name="⚔️ Eventos",value="""Use os **botões do mural** para aceitar Missões da Marinha e Bosses.
 `!eventostatus` — evento atual
 `!desistirevento` — desistir (não poderá repetir a instância)
-`!cacadas` — perseguidores ativos""",inline=False)
+`!cacadas` — perseguidores ativos
+`!bosses` — Bosses locais disponíveis
+`!boss <nome>` — enfrentar Boss on-RP
+`!bossacao <ação>` — agir contra o Boss local
+`!desistirboss` — abandonar confronto""",inline=False)
     embed.add_field(name="🐛 Suporte",value="`!report <descrição>` — abre um tópico de acompanhamento com a equipe.",inline=False)
     embed.set_footer(text="Sea's Paradise • o mundo continua mesmo sem staff online")
     await ctx.send(embed=embed)
