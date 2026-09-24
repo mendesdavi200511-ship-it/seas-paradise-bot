@@ -37,7 +37,7 @@ from views.dominios import (
 from data.profissoes import PROFISSOES
 from data.sistema import atributo_efetivo, rank_por_reputacao, proximo_rank, TALENTOS_AUTOMATICOS, FAMILIAS_VONTADE_D, aplicar_pisos_iniciais
 from data.skills import ESTILOS
-from data.poderes import HAKIS, AKUMA_TIPOS, inferir_tipo
+from data.poderes import HAKIS, AKUMA_TIPOS, inferir_tipo, skills_akuma
 
 
 
@@ -58,8 +58,8 @@ class FichaPoderesView(discord.ui.View):
         specs=await buscar_especializacoes(self.user_id); linhas=[]
         for a in specs:
             if a['categoria'] in ('akuma','akuma no mi'):
-                tipo=inferir_tipo(a['nome']); linhas.append(f"🍈 **{a['nome']}** • {tipo.title()} • **{a['porcentagem']}%**")
-                for n,req,d in AKUMA_TIPOS[tipo]: linhas.append(f"{'✅' if a['porcentagem']>=req else '🔒'} **{n}** ({req}%) — {d}")
+                tipo,skills=skills_akuma(a['nome']); linhas.append(f"🍈 **{a['nome']}** • {tipo.title()} • **{a['porcentagem']}% / 300%**")
+                for req,n,d in skills: linhas.append(f"{'✅' if a['porcentagem']>=req else '🔒'} **{n}** ({req}%) — {d}")
         await interaction.response.send_message(embed=discord.Embed(title='🍈 AKUMA NO MI — SKILLS',description='\n'.join(linhas) or 'Nenhuma Akuma no Mi.'),ephemeral=True)
 
 # =========================================================

@@ -12,7 +12,8 @@ from database.database import (
     renomear_embarcacao, reparar_embarcacao, registrar_transacao_economia, buscar_especializacoes,
     buscar_viagem_ativa, criar_viagem, viagens_pendentes, criar_evento_viagem, evento_aberto_viagem, liberar_rota_especial, rota_especial_liberada,
     resolver_evento_viagem, agendar_proximo_evento_viagem, concluir_viagem, danificar_embarcacao, mover_embarcacao,
-    buscar_treinamento_ativo, buscar_sessao_ativa_usuario,
+    buscar_treinamento_ativo, buscar_sessao_ativa_usuario, evento_ativo_usuario, boss_rp_ativo_usuario,
+    criar_plano_viagem, buscar_plano_viagem_user, buscar_plano_viagem_canal, listar_embarques, embarcar_plano, desembarcar_plano, cancelar_plano_viagem, fechar_plano_viagem, passageiros_viagem,
 )
 
 COR = discord.Color.from_rgb(32, 104, 160)
@@ -191,41 +192,133 @@ class Economia(commands.Cog):
         specs=await buscar_especializacoes(user_id); sp=next((x for x in specs if x['categoria']=='profissao' and x['nome']=='Carpinteiro'),None)
         return int(sp['porcentagem']) if sp else 0
 
+    async def pode_embarcar(self,user_id,origem):
+        if await buscar_viagem_ativa(user_id): return False,"já está em uma viagem"
+        if await buscar_treinamento_ativo(user_id): return False,"está treinando"
+        if await buscar_sessao_ativa_usuario(user_id): return False,"está em uma cena ativa"
+        if await evento_ativo_usuario(user_id): return False,"está em um evento global"
+        if await boss_rp_ativo_usuario(user_id): return False,"está enfrentando um Boss de progressão"
+        loc=await buscar_localizacao_jogador(user_id); atual=normalizar_destino(loc['localizacao'] if loc else None)
+        if atual!=origem:return False,f"está em {atual or 'local desconhecido'}, não em {origem}"
+        return True,None
+
+    async def iniciar_plano_se_pronto(self,ctx,plano):
+        embarcados=await listar_embarques(plano['id'])
+        if len(embarcados)<plano['vagas']:
+            return False
+        # Revalida todos no instante da partida para impedir teleportes/estados concorrentes.
+        for m in embarcados:
+            ok,motivo=await self.pode_embarcar(m['user_id'],plano['origem'])
+            if not ok:
+                await ctx.send(f"❌ **{m['nome']}** não pode partir agora: {motivo}. Use `!desembarcar` (se não for o capitão) ou resolva o estado antes de `!partir`.")
+                return False
+        r=ROTAS_INFO.get((plano['origem'],plano['destino']))
+        if not r:return False
+        # O melhor Navegador realmente conduz a viagem, mesmo que não seja o dono do navio.
+        navs=[]
+        for m in embarcados:
+            p,_,_=await self.bonus_navegador(m['user_id']); navs.append((p,m))
+        pnav,navm=max(navs,key=lambda x:x[0]) if navs else (0,None)
+        mult_custo=0.5 if pnav>=200 else 0.7 if pnav>=120 else 0.8 if pnav>=80 else 0.9 if pnav>=40 else 1.0
+        mult_tempo=0.5 if pnav>=200 else 0.8 if pnav>=160 else 1.0
+        supr=max(1,round(r['suprimentos']*len(embarcados)*mult_custo))
+        inv=await buscar_item_inventario(plano['proprietario_id'],'mantimentos')
+        if not inv or inv['quantidade']<supr:
+            await ctx.send(f"📦 O grupo está completo, mas o capitão precisa de **{supr} Caixa(s) de Mantimentos** para {len(embarcados)} viajante(s). Depois use `!partir`.")
+            return False
+        await consumir_item(plano['proprietario_id'],'mantimentos',supr)
+        minutos=max(10,round(r['minutos']*mult_tempo)); chegada=datetime.now(timezone.utc)+timedelta(minutes=minutos)
+        eventos=max(0,r['perigo']-1); primeiro=datetime.now(timezone.utc)+timedelta(minutes=max(5,minutos/(eventos+1))) if eventos else None
+        ids=[m['user_id'] for m in embarcados]
+        v=await criar_viagem(plano['proprietario_id'],plano['embarcacao_id'],plano['origem'],plano['destino'],plano['canal_id'],chegada,primeiro,eventos,supr,r['desgaste'],ids)
+        await fechar_plano_viagem(plano['id'])
+        for uid in ids: await definir_localizacao_jogador(uid,'Em alto-mar',f"{plano['origem']} → {plano['destino']}")
+        await registrar_transacao_economia(plano['proprietario_id'],'viagem',0,None,supr,f"{plano['origem']} -> {plano['destino']} ({len(ids)} pessoas)")
+        nomes=', '.join(m['nome'] for m in embarcados)
+        navtxt=f"{navm['nome']} — {pnav}%" if navm else 'Nenhum — 0%'
+        await ctx.send(f"⛵ **VIAGEM INICIADA**\n🧭 {plano['origem']} → **{plano['destino']}**\n👥 A bordo: **{len(ids)}/{plano['vagas']}** — {nomes}\n🧭 Navegador responsável: **{navtxt}**\n⏱️ Previsão: **{minutos} min**\n📦 Mantimentos: **-{supr}**\n❤️ Desgaste previsto: **-{r['desgaste']}**\n⚠️ Perigo: **{r['perigo']}/5**\n\nObstáculos e chegada valem para **todo mundo a bordo**.")
+        return True
+
     @commands.command()
     async def viajar(self,ctx,*,destino:str):
         ficha=await buscar_ficha(ctx.author.id)
         if not ficha:return await ctx.send("❌ Você ainda não possui ficha.")
-        if await buscar_viagem_ativa(ctx.author.id):return await ctx.send("⛵ Você já está em viagem. Use `!viagemstatus`.")
-        treino=await buscar_treinamento_ativo(ctx.author.id)
-        if treino:return await ctx.send(f"🏋️ Você está treinando **{treino['alvo']}** e não pode viajar até concluir ou usar `!cancelartreino`.")
-        sessao=await buscar_sessao_ativa_usuario(ctx.author.id)
-        if sessao:return await ctx.send("🎭 Você está participando de uma cena ativa e não pode iniciar uma viagem agora.")
-        origem=await self.local_ctx(ctx); destino=normalizar_destino(destino)
-        r=ROTAS_INFO.get((origem,destino))
+        if await buscar_plano_viagem_user(ctx.author.id):return await ctx.send("⛵ Você já está em um embarque aberto. Use `!embarquestatus` ou `!cancelarviagem`.")
+        ok,motivo=await self.pode_embarcar(ctx.author.id,await self.local_ctx(ctx))
+        if not ok:return await ctx.send(f"❌ Você não pode preparar viagem agora: {motivo}.")
+        origem=await self.local_ctx(ctx); destino=normalizar_destino(destino); r=ROTAS_INFO.get((origem,destino))
         if not r:return await ctx.send(f"❌ Não há rota direta **{origem} → {destino}**. Use `!rotas`.")
         navio=await buscar_embarcacao_ativa(ctx.author.id)
-        if not navio:return await ctx.send("❌ Você precisa de uma embarcação ativa.")
+        if not navio:return await ctx.send("❌ Você precisa ser dono de uma embarcação ativa para preparar a viagem.")
         if normalizar_destino(navio['localizacao'])!=origem:return await ctx.send(f"❌ Seu navio está em **{navio['localizacao']}**.")
         req=r['requisito']
         if req=='log_pose' and not await buscar_item_inventario(ctx.author.id,'log_pose'):return await ctx.send("🧭 Esta rota exige **Log Pose**.")
         if req=='revestimento' and not await buscar_item_inventario(ctx.author.id,'revestimento_navio'):return await ctx.send("🫧 Esta descida exige **Revestimento de Sabaody**.")
         if req in ('knock_up_or_special','calm_belt','government_or_special','special','road_poneglyphs','eternal_or_route'):
-            liberada=await rota_especial_liberada(ctx.author.id,destino)
-            eternal=next((iid for iid,d in ITENS.items() if d.get('destino')==destino),None)
-            possui_eternal=bool(eternal and await buscar_item_inventario(ctx.author.id,eternal))
-            if not liberada and not possui_eternal:
-                return await ctx.send(f"🔒 Essa rota possui requisito especial (**{req}**). Ela precisa ser conquistada no RP/liberada pelo Mestre ou possuir um Eternal Pose válido para o destino.")
-        pnav,mult_custo,mult_tempo=await self.bonus_navegador(ctx.author.id)
-        supr=max(1,round(r['suprimentos']*mult_custo)); inv=await buscar_item_inventario(ctx.author.id,'mantimentos')
-        if not inv or inv['quantidade']<supr:return await ctx.send(f"📦 A viagem exige **{supr} Caixa(s) de Mantimentos**.")
-        await consumir_item(ctx.author.id,'mantimentos',supr)
-        minutos=max(10,round(r['minutos']*mult_tempo)); chegada=datetime.now(timezone.utc)+timedelta(minutes=minutos)
-        eventos=max(0,r['perigo']-1); primeiro=None
-        if eventos: primeiro=datetime.now(timezone.utc)+timedelta(minutes=max(5,minutos/(eventos+1)))
-        v=await criar_viagem(ctx.author.id,navio['id'],origem,destino,ctx.channel.id,chegada,primeiro,eventos,supr,r['desgaste'])
-        await definir_localizacao_jogador(ctx.author.id,f"Em alto-mar",f"{origem} → {destino}")
-        await registrar_transacao_economia(ctx.author.id,'viagem',0,None,supr,f"{origem} -> {destino}")
-        await ctx.send(f"⛵ **VIAGEM INICIADA**\n🧭 {origem} → **{destino}**\n🚢 {navio['nome']}\n⏱️ Previsão: **{minutos} min**\n📦 Mantimentos: **-{supr}**\n❤️ Desgaste previsto: **-{r['desgaste']}**\n⚠️ Perigo: **{r['perigo']}/5**\n🧭 Navegador: **{pnav}%**\n\nDurante a viagem o Narrador pode narrar normalmente em **alto-mar**. Eu aviso obstáculos e a chegada automaticamente.")
+            liberada=await rota_especial_liberada(ctx.author.id,destino); eternal=next((iid for iid,d in ITENS.items() if d.get('destino')==destino),None); possui=bool(eternal and await buscar_item_inventario(ctx.author.id,eternal))
+            if not liberada and not possui:return await ctx.send(f"🔒 Essa rota possui requisito especial (**{req}**).")
+        maximo=max(1,int(navio['capacidade']))
+        cog=self
+        class QuantidadeModal(discord.ui.Modal,title='Definir passageiros'):
+            quantidade=discord.ui.TextInput(label=f'Quantas pessoas? (1 a {maximo})',placeholder='Ex.: 5',max_length=3)
+            async def on_submit(modal_self,i):
+                if i.user.id!=ctx.author.id:return await i.response.send_message('❌ Apenas o dono do navio escolhe.',ephemeral=True)
+                try:vagas=int(str(modal_self.quantidade.value).strip())
+                except ValueError:return await i.response.send_message('❌ Digite apenas um número.',ephemeral=True)
+                if vagas<1 or vagas>maximo:return await i.response.send_message(f'❌ Este navio comporta de **1 a {maximo}** pessoas.',ephemeral=True)
+                p=await criar_plano_viagem(ctx.author.id,navio['id'],origem,destino,ctx.channel.id,vagas)
+                if not p:return await i.response.send_message('❌ Você já possui/participa de um embarque aberto.',ephemeral=True)
+                await i.response.send_message(f"⚓ **EMBARQUE ABERTO — {navio['nome']}**\n🧭 {origem} → **{destino}**\n👥 Lugares desta viagem: **1/{vagas}**\n👑 O dono do navio já está embarcado.\n\nOs demais usam **`!embarcar`** neste canal. Ao atingir **{vagas}**, o bot tenta partir automaticamente.\nUse **`!cancelarviagem`** para cancelar antes da partida.")
+                if vagas==1: await cog.iniciar_plano_se_pronto(ctx,p)
+        class QuantidadeView(discord.ui.View):
+            def __init__(view_self):super().__init__(timeout=120)
+            @discord.ui.button(label='Definir quantidade',emoji='👥',style=discord.ButtonStyle.primary)
+            async def definir(view_self,i,b):
+                if i.user.id!=ctx.author.id:return await i.response.send_message('❌ Apenas o dono do navio escolhe.',ephemeral=True)
+                await i.response.send_modal(QuantidadeModal())
+        await ctx.send(f"🚢 **PREPARAR VIAGEM — {navio['nome']}**\n🧭 {origem} → **{destino}**\nQuantas pessoas irão nesta viagem?",view=QuantidadeView())
+
+    @commands.command()
+    async def embarcar(self,ctx):
+        if await buscar_plano_viagem_user(ctx.author.id):return await ctx.send('⚓ Você já está em um embarque aberto.')
+        p=await buscar_plano_viagem_canal(ctx.channel.id)
+        if not p:return await ctx.send('❌ Não existe embarque aberto neste canal.')
+        ok,motivo=await self.pode_embarcar(ctx.author.id,p['origem'])
+        if not ok:return await ctx.send(f'❌ Você não pode embarcar: {motivo}.')
+        certo,msg=await embarcar_plano(p['id'],ctx.author.id)
+        if not certo:return await ctx.send('❌ '+msg)
+        ms=await listar_embarques(p['id']); await ctx.send(f"⚓ {ctx.author.mention} embarcou. **{len(ms)}/{p['vagas']}** a bordo.")
+        if len(ms)>=p['vagas']: await self.iniciar_plano_se_pronto(ctx,p)
+
+    @commands.command()
+    async def desembarcar(self,ctx):
+        p=await buscar_plano_viagem_user(ctx.author.id)
+        if not p:return await ctx.send('❌ Você não está aguardando uma viagem.')
+        if p['proprietario_id']==ctx.author.id:return await ctx.send('👑 O dono do navio não desembarca do próprio plano. Use `!cancelarviagem`.')
+        await desembarcar_plano(ctx.author.id); await ctx.send(f'⚓ {ctx.author.mention} desembarcou antes da partida.')
+
+    @commands.command()
+    async def embarquestatus(self,ctx):
+        p=await buscar_plano_viagem_user(ctx.author.id) or await buscar_plano_viagem_canal(ctx.channel.id)
+        if not p:return await ctx.send('⚓ Não há embarque aberto aqui.')
+        ms=await listar_embarques(p['id']); await ctx.send(f"⚓ **EMBARQUE — {p['origem']} → {p['destino']}**\n👥 **{len(ms)}/{p['vagas']}**\n"+'\n'.join(f"• {m['nome']}" for m in ms))
+
+    @commands.command()
+    async def partir(self,ctx):
+        p=await buscar_plano_viagem_user(ctx.author.id)
+        if not p or p['proprietario_id']!=ctx.author.id:return await ctx.send('❌ Você não possui embarque aberto como dono do navio.')
+        ms=await listar_embarques(p['id'])
+        if len(ms)<p['vagas']:return await ctx.send(f"⏳ Ainda faltam **{p['vagas']-len(ms)}** pessoa(s) embarcar.")
+        await self.iniciar_plano_se_pronto(ctx,p)
+
+    @commands.command()
+    async def cancelarviagem(self,ctx):
+        p=await buscar_plano_viagem_user(ctx.author.id)
+        if p:
+            if p['proprietario_id']!=ctx.author.id:return await ctx.send('❌ Apenas o dono do navio pode cancelar o embarque. Você pode usar `!desembarcar`.')
+            await cancelar_plano_viagem(ctx.author.id); return await ctx.send('🛑 **Embarque cancelado.** Ninguém foi movido e nenhum mantimento foi gasto.')
+        if await buscar_viagem_ativa(ctx.author.id):return await ctx.send('🌊 A embarcação já partiu. A viagem ativa não pode ser cancelada como se nunca tivesse acontecido.')
+        await ctx.send('ℹ️ Você não possui embarque/viagem para cancelar.')
 
     @commands.command()
     async def viagemstatus(self,ctx):
@@ -297,13 +390,17 @@ class Economia(commands.Cog):
                 perigo=ROTAS_INFO.get((v['origem'],v['destino']),{}).get('perigo',2); emoji,titulo,desc=random.choice(OBSTACULOS.get(perigo,OBSTACULOS[2]))
                 await criar_evento_viagem(v['id'],f"{emoji} {titulo}",desc)
                 if ch:
-                    try: await ch.send(f"<@{v['user_id']}>\n{emoji} **OBSTÁCULO DE VIAGEM — {titulo.upper()}**\n{desc}\n\nDescreva o que fará com `!resolverviagem <ação>`. **O relógio da chegada continua, mas a viagem não conclui enquanto o obstáculo estiver pendente.**")
+                    try:
+                        ps=await passageiros_viagem(v['id']); mencoes=' '.join(f"<@{x['user_id']}>" for x in ps) or f"<@{v['user_id']}>"
+                        await ch.send(f"{mencoes}\n{emoji} **OBSTÁCULO DE VIAGEM — {titulo.upper()}**\n{desc}\n\nQualquer pessoa a bordo pode responder com `!resolverviagem <ação>`. **O relógio da chegada continua, mas a viagem não conclui enquanto o obstáculo estiver pendente.**")
                     except: pass
                 continue
             if agora>=v['chegada_em']:
                 fim=await concluir_viagem(v['id'])
                 if fim and ch:
-                    try: await ch.send(f"<@{v['user_id']}> 🏝️ **DESTINO ALCANÇADO!**\n🧭 **{fim['destino']}**\n🚢 A embarcação chegou ao destino e sua localização foi atualizada. O Narrador já pode continuar a aventura normalmente daqui.")
+                    try:
+                        ps=await passageiros_viagem(fim['id']); mencoes=' '.join(f"<@{x['user_id']}>" for x in ps) or f"<@{v['user_id']}>"
+                        await ch.send(f"{mencoes} 🏝️ **DESTINO ALCANÇADO!**\n🧭 **{fim['destino']}**\n🚢 A embarcação chegou ao destino e a localização de **todos a bordo** foi atualizada. O Narrador já pode continuar a aventura normalmente daqui.")
                     except: pass
     @relogio_viagens.before_loop
     async def antes_relogio(self): await self.bot.wait_until_ready()

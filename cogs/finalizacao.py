@@ -3,7 +3,7 @@ from datetime import datetime,timedelta,timezone
 from zoneinfo import ZoneInfo
 import discord
 from discord.ext import commands,tasks
-from data.poderes import HAKIS,AKUMA_TIPOS,inferir_tipo
+from data.poderes import HAKIS,AKUMA_TIPOS,inferir_tipo,skills_akuma
 from database.database import *
 
 CANAL_SORTEIOS=1552747415151579197
@@ -36,8 +36,8 @@ class PoderesView(discord.ui.View):
         specs=await buscar_especializacoes(self.uid); aks=[x for x in specs if x['categoria'] in ('akuma','akuma no mi')]
         linhas=[]
         for a in aks:
-            tipo=inferir_tipo(a['nome']); pct=a['porcentagem']; linhas.append(f"🍈 **{a['nome']}** • {tipo.title()} • **{pct}%**")
-            for n,req,d in AKUMA_TIPOS[tipo]: linhas.append(f"{'✅' if pct>=req else '🔒'} {n} ({req}%) — {d}")
+            tipo,skills=skills_akuma(a['nome']); pct=a['porcentagem']; linhas.append(f"🍈 **{a['nome']}** • {tipo.title()} • **{pct}% / 300%**")
+            for req,n,d in skills: linhas.append(f"{'✅' if pct>=req else '🔒'} {n} ({req}%) — {d}")
             if tipo=='zoan' and pct>=20:
                 await liberar_forma(self.uid,f"{a['nome']} — Forma Animal",25,20,15,'Forma animal da Zoan','20% Akuma')
             if tipo=='zoan' and pct>=50:
@@ -83,19 +83,53 @@ class Finalizacao(commands.Cog):
 
     @commands.group(invoke_without_command=True)
     async def tripulacao(self,ctx):
+        """Painel persistente da tripulação."""
         t=await buscar_tripulacao_user(ctx.author.id)
-        if not t:return await ctx.send('🏴‍☠️ Você não pertence a uma tripulação. Use `!tripulacao criar <nome>` ou `!tripulacao entrar <nome>`.')
-        ms=await listar_membros_tripulacao(t['id']); await ctx.send(f"🏴‍☠️ **{t['nome']}**\nCapitão: <@{t['capitao_user_id']}>\n"+'\n'.join(f"• {m['nome']} — {m['cargo']}" for m in ms))
+        if not t:
+            return await ctx.send('🏴‍☠️ **TRIPULAÇÕES**\nVocê ainda não pertence a uma.\n`!tripulacao criar <nome>` — criar\n`!tripulacao entrar <nome>` — entrar em uma conhecida')
+        ms=await listar_membros_tripulacao(t['id'])
+        linhas='\n'.join(f"• <@{m['user_id']}> **{m['nome']}** — {m['cargo']}" for m in ms)
+        await ctx.send(f"🏴‍☠️ **{t['nome']}**\n👑 Capitão: <@{t['capitao_user_id']}>\n👥 Membros: **{len(ms)}**\n{linhas}\n\n⚓ Para viajar juntos, o dono do navio usa `!viajar <destino>`, escolhe quantos irão e os demais usam `!embarcar`.")
+
     @tripulacao.command(name='criar')
     async def trip_criar(self,ctx,*,nome):
-        r=await criar_tripulacao(nome,ctx.author.id); await ctx.send(f'🏴‍☠️ Tripulação **{nome}** criada!' if r else '❌ Nome já usado ou você já pertence a uma tripulação.')
+        nome=nome.strip()[:60]
+        r=await criar_tripulacao(nome,ctx.author.id)
+        await ctx.send(f'🏴‍☠️ Tripulação **{nome}** criada! Você é o Capitão.' if r else '❌ Nome já usado ou você já pertence a uma tripulação.')
+
     @tripulacao.command(name='entrar')
     async def trip_entrar(self,ctx,*,nome):
+        if await buscar_tripulacao_user(ctx.author.id):return await ctx.send('❌ Você já pertence a uma tripulação.')
         t=await buscar_tripulacao_nome(nome)
         if not t:return await ctx.send('❌ Tripulação não encontrada.')
-        await entrar_tripulacao(t['id'],ctx.author.id); await ctx.send(f'🏴‍☠️ Você entrou em **{t["nome"]}**.')
+        await entrar_tripulacao(t['id'],ctx.author.id); await ctx.send(f'🏴‍☠️ Você entrou em **{t["nome"]}**. O capitão pode organizar seu cargo.')
+
     @tripulacao.command(name='sair')
-    async def trip_sair(self,ctx): await sair_tripulacao(ctx.author.id); await ctx.send('🏴‍☠️ Você saiu da tripulação.')
+    async def trip_sair(self,ctx):
+        t=await buscar_tripulacao_user(ctx.author.id)
+        if not t:return await ctx.send('❌ Você não pertence a uma tripulação.')
+        if t['capitao_user_id']==ctx.author.id:return await ctx.send('👑 O Capitão não pode abandonar a tripulação sem transferir a capitania: `!tripulacao capitao @membro`.')
+        await sair_tripulacao(ctx.author.id); await ctx.send('🏴‍☠️ Você saiu da tripulação.')
+
+    @tripulacao.command(name='expulsar')
+    async def trip_expulsar(self,ctx,membro:discord.Member):
+        t=await buscar_tripulacao_user(ctx.author.id)
+        if not t or t['capitao_user_id']!=ctx.author.id:return await ctx.send('❌ Apenas o Capitão pode expulsar membros.')
+        if membro.id==ctx.author.id:return await ctx.send('❌ Use transferência de capitania para reorganizar a liderança.')
+        await remover_membro_tripulacao(t['id'],membro.id); await ctx.send(f'🏴‍☠️ {membro.mention} foi removido de **{t["nome"]}**.')
+
+    @tripulacao.command(name='cargo')
+    async def trip_cargo(self,ctx,membro:discord.Member,*,cargo:str):
+        t=await buscar_tripulacao_user(ctx.author.id)
+        if not t or t['capitao_user_id']!=ctx.author.id:return await ctx.send('❌ Apenas o Capitão pode definir cargos.')
+        await definir_cargo_tripulacao(t['id'],membro.id,cargo); await ctx.send(f'🏴‍☠️ Cargo de {membro.mention}: **{cargo[:40]}**.')
+
+    @tripulacao.command(name='capitao')
+    async def trip_capitao(self,ctx,membro:discord.Member):
+        t=await buscar_tripulacao_user(ctx.author.id)
+        if not t or t['capitao_user_id']!=ctx.author.id:return await ctx.send('❌ Apenas o Capitão atual pode transferir a capitania.')
+        ok=await transferir_capitania(t['id'],ctx.author.id,membro.id)
+        await ctx.send(f'👑 {membro.mention} agora é o Capitão de **{t["nome"]}**.' if ok else '❌ Esse jogador precisa pertencer à sua tripulação.')
 
     @commands.command()
     async def alcunhas(self,ctx):
@@ -141,7 +175,7 @@ class Finalizacao(commands.Cog):
         e.add_field(name='4️⃣ Economia',value='Berries compram itens, navios e serviços. Inventário é persistente; itens podem ser usados, vendidos e doados. Tesouros e saques entram diretamente na carteira/inventário.',inline=False)
         e.add_field(name='5️⃣ Mar',value='Navios sofrem desgaste, gastam suprimentos e podem enfrentar eventos aleatórios. Navegador, Carpinteiro e Pescador possuem vantagens reais. Log Pose/Eternal Pose liberam navegação apropriada.',inline=False)
         e.add_field(name='6️⃣ Mundo vivo',value='Ilhas têm perigos, Bosses, tesouros e segredos. Podem ser dominadas/destruídas. Existem caçadores, subordinados autônomos, tripulações, organizações, prisão, reputação, ranks e alcunhas por feitos.',inline=False)
-        e.add_field(name='7️⃣ Eventos & Bosses',value='O mural global publica missões da Marinha e Bosses especiais. Bosses locais on-RP podem ser consultados com `!bosses` e enfrentados com `!boss <nome>` + `!bossacao`. Eles possuem cooldown e progressão controlada para evitar farm.',inline=False)
+        e.add_field(name='7️⃣ Eventos & Bosses',value='O mural global publica missões da Marinha e Bosses especiais. Bosses de progressão não-canônicos estão sempre disponíveis em `!bosses` e começam com `!boss <rank>` + `!bossacao`. Personagens canônicos/marcantes são enfrentados pela narração e possuem registro/recompensa próprios.',inline=False)
         e.add_field(name='8️⃣ Akuma no Mi',value='`!procurar-akuma` pode ser usado a cada 24h. Encontrar uma fruta é raro; ela vai ao inventário e apodrece após 5 dias se não for usada/doada.',inline=False)
         e.set_footer(text='Explore, escolha seu caminho e deixe o mundo reagir aos seus feitos.')
         await ctx.send(embed=e)

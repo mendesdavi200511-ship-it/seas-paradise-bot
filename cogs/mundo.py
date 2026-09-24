@@ -246,7 +246,34 @@ class Mundo(commands.Cog):
 
     async def garantir_formas_naturais(self,user_id):
         ficha=await buscar_ficha(user_id)
-        if ficha and ((ficha['familia'] or '').casefold()=='vinsmoke' or (ficha['raca'] or '').casefold()=='corpo modificado'): await liberar_forma(user_id,'Corpo Modificado',20,25,15,'Fisiologia modificada; maior capacidade física e resistência.','Vinsmoke/Corpo Modificado')
+        if ficha and ((ficha['familia'] or '').casefold()=='vinsmoke' or (ficha['raca'] or '').casefold()=='corpo modificado'):
+            await liberar_forma(user_id,'Corpo Modificado',20,25,15,'Fisiologia modificada; maior capacidade física e resistência.','Vinsmoke/Corpo Modificado')
+        # Haki ativável: aparece no mesmo motor de Transformações/Haki, mas só se o personagem realmente possuir o Haki.
+        specs=await buscar_especializacoes(user_id)
+        for h in specs:
+            if h['categoria']!='haki': continue
+            pct=int(h['porcentagem'])
+            if h['nome']=='Busoshoku Haki':
+                bf=10 if pct<30 else 15 if pct<100 else 22 if pct<200 else 30
+                br=12 if pct<30 else 20 if pct<100 else 28 if pct<200 else 38
+                cap='Revestimento ativo: reforça corpo/arma, ataque e resistência.'
+                if pct>=30: cap+=' Endurecimento disponível.'
+                if pct>=100: cap+=' Emissão disponível.'
+                if pct>=200: cap+=' Destruição Interna disponível.'
+                await liberar_forma(user_id,'Busoshoku Haki',bf,br,0,cap,f'Busoshoku {pct}%')
+            elif h['nome']=='Kenbunshoku Haki':
+                bv=8 if pct<40 else 12 if pct<100 else 18 if pct<200 else 25
+                cap='Percepção de presenças/intenção ativa; bônus representa reação e leitura, não velocidade física permanente.'
+                if pct>=40: cap+=' Leitura de Intenção disponível.'
+                if pct>=100: cap+=' Alcance Expandido disponível.'
+                if pct>=200: cap+=' Visão do Futuro disponível.'
+                await liberar_forma(user_id,'Kenbunshoku Haki',0,0,bv,cap,f'Kenbunshoku {pct}%')
+            elif h['nome']=='Haoshoku Haki':
+                bf=18 if pct>=200 else 0
+                cap='Pressão do Rei ativa.'
+                if pct>=50: cap+=' Explosão direcionada disponível.'
+                if pct>=200: cap+=' Revestimento do Rei disponível e reforça ataques.'
+                await liberar_forma(user_id,'Haoshoku Haki',bf,0,0,cap,f'Haoshoku {pct}%')
 
     @commands.command()
     async def formas(self,ctx):
