@@ -650,6 +650,56 @@ async def criar_tabelas():
         await conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_treino_ativo_user ON treinamentos(user_id) WHERE status='ativo';""")
 
         # =================================================
+        # MUNDO AUTÔNOMO — EVENTOS / BOSSES / ILHAS / NPCS
+        # =================================================
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS eventos_globais (
+                id BIGSERIAL PRIMARY KEY, tipo TEXT NOT NULL, titulo TEXT NOT NULL, descricao TEXT,
+                localizacao TEXT NOT NULL, rank TEXT NOT NULL, recompensa JSONB NOT NULL DEFAULT '{}'::jsonb,
+                canal_id BIGINT, mensagem_id BIGINT, thread_id BIGINT, sessao_id BIGINT,
+                status TEXT NOT NULL DEFAULT 'aberto', exclusivo_marinha BOOLEAN NOT NULL DEFAULT FALSE,
+                criado_em TIMESTAMPTZ DEFAULT NOW(), expira_em TIMESTAMPTZ NOT NULL, encerrado_em TIMESTAMPTZ
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS participantes_evento_global (
+                evento_id BIGINT NOT NULL REFERENCES eventos_globais(id) ON DELETE CASCADE, user_id BIGINT NOT NULL,
+                personagem_nome TEXT, status TEXT NOT NULL DEFAULT 'participando', entrou_em TIMESTAMPTZ DEFAULT NOW(),
+                finalizado_em TIMESTAMPTZ, PRIMARY KEY(evento_id,user_id)
+            );
+        """)
+        await conn.execute("""CREATE INDEX IF NOT EXISTS idx_evento_user_status ON participantes_evento_global(user_id,status);""")
+        await conn.execute("ALTER TABLE eventos_globais ADD COLUMN IF NOT EXISTS hp_max INTEGER;")
+        await conn.execute("ALTER TABLE eventos_globais ADD COLUMN IF NOT EXISTS hp_atual INTEGER;")
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS dominacao_ilhas (
+                localizacao TEXT PRIMARY KEY, dono_user_id BIGINT, dono_nome TEXT, faccao TEXT, estado TEXT NOT NULL DEFAULT 'livre',
+                integridade INTEGER NOT NULL DEFAULT 100, atualizado_em TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS subordinados (
+                id BIGSERIAL PRIMARY KEY, dono_user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE,
+                nome TEXT NOT NULL, funcao TEXT NOT NULL, rank TEXT NOT NULL DEFAULT 'E', salario BIGINT NOT NULL DEFAULT 1000,
+                lealdade INTEGER NOT NULL DEFAULT 50, personalidade TEXT, memoria TEXT, ativo BOOLEAN NOT NULL DEFAULT TRUE,
+                criado_em TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS cacadas_ativas (
+                id BIGSERIAL PRIMARY KEY, alvo_user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE,
+                cacador_nome TEXT NOT NULL, rank TEXT NOT NULL, motivo TEXT, status TEXT NOT NULL DEFAULT 'ativa',
+                ultima_localizacao TEXT, criado_em TIMESTAMPTZ DEFAULT NOW(), atualizado_em TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS descobertas_ilha (
+                user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, localizacao TEXT NOT NULL, chave TEXT NOT NULL,
+                descoberto_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(user_id,localizacao,chave)
+            );
+        """)
+
+        # =================================================
         # GARANTIR CARTEIRA PARA FICHAS ANTIGAS
         # =================================================
 
@@ -2451,7 +2501,7 @@ async def resolver_evento_viagem(viagem_id,acao,resultado,atraso_min=0,dano=0):
             ev=await c.fetchrow("SELECT * FROM eventos_viagem WHERE viagem_id=$1 AND resolvido=FALSE ORDER BY id DESC LIMIT 1 FOR UPDATE;",viagem_id)
             if not ev:return None
             await c.execute("UPDATE eventos_viagem SET resolvido=TRUE,acao_player=$2,resultado=$3,resolvido_em=NOW() WHERE id=$1;",ev['id'],acao,resultado)
-            v=await c.fetchrow("UPDATE viagens SET status='viajando', chegada_em=chegada_em+($2||' minutes')::interval, eventos_restantes=GREATEST(0,eventos_restantes-1), proximo_evento_em=NULL, atualizado_em=NOW() WHERE id=$1 RETURNING *;",viagem_id,int(atraso_min))
+            v=await c.fetchrow("UPDATE viagens SET status='viajando', chegada_em=chegada_em+make_interval(mins => $2), eventos_restantes=GREATEST(0,eventos_restantes-1), proximo_evento_em=NULL, atualizado_em=NOW() WHERE id=$1 RETURNING *;",viagem_id,int(atraso_min))
             if dano>0: await c.execute("UPDATE embarcacoes SET integridade_atual=GREATEST(0,integridade_atual-$2),atualizado_em=NOW() WHERE id=$1;",v['embarcacao_id'],int(dano))
             return v
 
@@ -2521,3 +2571,88 @@ async def liberar_rota_especial(user_id,destino,origem=None,motivo="admin"):
     return await get_pool().execute("INSERT INTO rotas_liberadas(user_id,destino,origem,motivo) VALUES($1,$2,$3,$4) ON CONFLICT(user_id,destino) DO UPDATE SET origem=EXCLUDED.origem,motivo=EXCLUDED.motivo;",user_id,destino,origem,motivo)
 async def rota_especial_liberada(user_id,destino):
     return await get_pool().fetchval("SELECT EXISTS(SELECT 1 FROM rotas_liberadas WHERE user_id=$1 AND destino=$2);",user_id,destino)
+
+
+# =========================================================
+# MUNDO AUTÔNOMO — HELPERS
+# =========================================================
+async def criar_evento_global(tipo,titulo,descricao,localizacao,rank,recompensa,canal_id,expira_em,exclusivo_marinha=False):
+    import json
+    return await get_pool().fetchrow("""INSERT INTO eventos_globais(tipo,titulo,descricao,localizacao,rank,recompensa,canal_id,expira_em,exclusivo_marinha)
+        VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9) RETURNING *;""",tipo,titulo,descricao,localizacao,rank,json.dumps(recompensa),canal_id,expira_em,exclusivo_marinha)
+
+async def listar_eventos_globais_abertos():
+    return await get_pool().fetch("SELECT * FROM eventos_globais WHERE status='aberto' AND expira_em>NOW() ORDER BY id DESC;")
+
+async def buscar_evento_global(evento_id):
+    return await get_pool().fetchrow("SELECT * FROM eventos_globais WHERE id=$1;",int(evento_id))
+
+async def vincular_evento_thread(evento_id,thread_id,sessao_id):
+    return await get_pool().execute("UPDATE eventos_globais SET thread_id=$2,sessao_id=$3 WHERE id=$1;",int(evento_id),int(thread_id),int(sessao_id))
+
+async def participar_evento_global(evento_id,user_id,nome):
+    return await get_pool().fetchrow("""INSERT INTO participantes_evento_global(evento_id,user_id,personagem_nome,status) VALUES($1,$2,$3,'participando')
+        ON CONFLICT(evento_id,user_id) DO UPDATE SET personagem_nome=EXCLUDED.personagem_nome RETURNING *;""",int(evento_id),int(user_id),nome)
+
+async def status_participacao_evento(evento_id,user_id):
+    return await get_pool().fetchrow("SELECT * FROM participantes_evento_global WHERE evento_id=$1 AND user_id=$2;",int(evento_id),int(user_id))
+
+async def evento_ativo_usuario(user_id):
+    return await get_pool().fetchrow("""SELECT e.*,p.status AS participante_status FROM eventos_globais e JOIN participantes_evento_global p ON p.evento_id=e.id
+        WHERE p.user_id=$1 AND p.status='participando' AND e.status IN ('aberto','andamento') ORDER BY e.id DESC LIMIT 1;""",int(user_id))
+
+async def participantes_evento(evento_id,status=None):
+    if status:return await get_pool().fetch("SELECT * FROM participantes_evento_global WHERE evento_id=$1 AND status=$2 ORDER BY entrou_em;",int(evento_id),status)
+    return await get_pool().fetch("SELECT * FROM participantes_evento_global WHERE evento_id=$1 ORDER BY entrou_em;",int(evento_id))
+
+async def marcar_evento_andamento(evento_id):
+    return await get_pool().execute("UPDATE eventos_globais SET status='andamento' WHERE id=$1 AND status='aberto';",int(evento_id))
+
+async def desistir_evento(evento_id,user_id):
+    return await get_pool().fetchrow("UPDATE participantes_evento_global SET status='desistiu',finalizado_em=NOW() WHERE evento_id=$1 AND user_id=$2 AND status='participando' RETURNING *;",int(evento_id),int(user_id))
+
+async def buscar_sessao_por_id(sessao_id):
+    return await get_pool().fetchrow("SELECT * FROM sessoes_narracao WHERE id=$1;",int(sessao_id))
+
+async def concluir_evento_global(evento_id):
+    return await get_pool().fetchrow("UPDATE eventos_globais SET status='concluido',encerrado_em=NOW() WHERE id=$1 AND status<>'concluido' RETURNING *;",int(evento_id))
+
+async def finalizar_participantes_evento(evento_id):
+    return await get_pool().execute("UPDATE participantes_evento_global SET status='concluido',finalizado_em=NOW() WHERE evento_id=$1 AND status='participando';",int(evento_id))
+
+async def eventos_para_finalizar():
+    return await get_pool().fetch("""SELECT e.* FROM eventos_globais e JOIN sessoes_narracao s ON s.id=e.sessao_id
+        WHERE e.status='andamento' AND s.status='encerrada';""")
+
+async def definir_dominacao_ilha(localizacao,user_id,nome,faccao,estado='dominada',integridade=100):
+    return await get_pool().fetchrow("""INSERT INTO dominacao_ilhas(localizacao,dono_user_id,dono_nome,faccao,estado,integridade) VALUES($1,$2,$3,$4,$5,$6)
+        ON CONFLICT(localizacao) DO UPDATE SET dono_user_id=EXCLUDED.dono_user_id,dono_nome=EXCLUDED.dono_nome,faccao=EXCLUDED.faccao,estado=EXCLUDED.estado,integridade=EXCLUDED.integridade,atualizado_em=NOW() RETURNING *;""",localizacao,user_id,nome,faccao,estado,integridade)
+
+async def buscar_dominacao_ilha(localizacao):
+    return await get_pool().fetchrow("SELECT * FROM dominacao_ilhas WHERE LOWER(localizacao)=LOWER($1);",localizacao)
+
+async def criar_subordinado(user_id,nome,funcao,rank,salario,personalidade):
+    return await get_pool().fetchrow("INSERT INTO subordinados(dono_user_id,nome,funcao,rank,salario,personalidade) VALUES($1,$2,$3,$4,$5,$6) RETURNING *;",user_id,nome,funcao,rank,salario,personalidade)
+
+async def listar_subordinados(user_id):
+    return await get_pool().fetch("SELECT * FROM subordinados WHERE dono_user_id=$1 AND ativo=TRUE ORDER BY id;",user_id)
+
+async def criar_cacada(alvo_user_id,cacador_nome,rank,motivo,localizacao=None):
+    return await get_pool().fetchrow("INSERT INTO cacadas_ativas(alvo_user_id,cacador_nome,rank,motivo,ultima_localizacao) VALUES($1,$2,$3,$4,$5) RETURNING *;",alvo_user_id,cacador_nome,rank,motivo,localizacao)
+
+async def listar_cacadas(alvo_user_id):
+    return await get_pool().fetch("SELECT * FROM cacadas_ativas WHERE alvo_user_id=$1 AND status='ativa' ORDER BY id DESC;",alvo_user_id)
+
+async def registrar_descoberta(user_id,localizacao,chave):
+    return await get_pool().execute("INSERT INTO descobertas_ilha(user_id,localizacao,chave) VALUES($1,$2,$3) ON CONFLICT DO NOTHING;",user_id,localizacao,chave)
+
+async def listar_descobertas(user_id,localizacao):
+    return await get_pool().fetch("SELECT chave FROM descobertas_ilha WHERE user_id=$1 AND LOWER(localizacao)=LOWER($2);",user_id,localizacao)
+
+
+async def definir_hp_evento(evento_id,hp):
+    return await get_pool().execute("UPDATE eventos_globais SET hp_max=$2,hp_atual=$2 WHERE id=$1;",int(evento_id),int(hp))
+
+async def candidatos_cacada():
+    return await get_pool().fetch("""SELECT f.user_id,f.nome,f.reputacao,l.localizacao FROM fichas f LEFT JOIN localizacoes_jogador l ON l.user_id=f.user_id
+        WHERE f.reputacao>=500 AND NOT EXISTS(SELECT 1 FROM cacadas_ativas c WHERE c.alvo_user_id=f.user_id AND c.status='ativa') ORDER BY f.reputacao DESC LIMIT 10;""")
