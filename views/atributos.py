@@ -15,47 +15,21 @@ VALORES_DISTRIBUICAO = [
 
 
 # =========================================================
-# ESCALA DE ATRIBUTOS
+# ESCALAS OFICIAIS / APRESENTAÇÃO
 # =========================================================
-
-ESCALA_ATRIBUTOS = [
-    (50000, "Lendário"),
-    (25000, "Titânico"),
-    (10000, "Sobre-Humano"),
-    (5000, "Monstruoso"),
-    (2000, "Excepcional"),
-    (1000, "Muito Forte"),
-    (600, "Forte"),
-    (350, "Bom"),
-    (200, "Mediano"),
-    (100, "Normal"),
-    (50, "Fraco"),
-    (20, "Muito Fraco"),
-]
-
+from data.sistema import atributo_efetivo
 
 def formatar_numero(valor):
+    if isinstance(valor, float) and not valor.is_integer():
+        return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{int(valor):,}".replace(",", ".")
 
-    return f"{valor:,}".replace(",", ".")
-
-
-def nivel_atributo(valor):
-
-    for minimo, nome in ESCALA_ATRIBUTOS:
-
-        if valor >= minimo:
-            return nome
-
-    return "Muito Fraco"
-
-
-def formatar_atributo(valor):
-
-    return (
-        f"**{formatar_numero(valor)}**\n"
-        f"{nivel_atributo(valor)}"
-    )
-
+def formatar_atributo(tipo, valor, raca=None, familia=None):
+    info, bonus, efetivo = atributo_efetivo(tipo, valor, raca, familia)
+    linhas=[f"**{info['nome']}** • `{formatar_numero(valor)} pts`", f"└ Base física: **{formatar_numero(info['valor'])} {info['unidade']}**"]
+    if bonus:
+        linhas += [f"└ Bônus passivo: **+{bonus}%**", f"└ Valor efetivo: **{formatar_numero(efetivo)} {info['unidade']}**"]
+    return "\n".join(linhas)
 
 # =========================================================
 # EMBED
@@ -75,7 +49,7 @@ def embed_atributos(dados):
     embed.add_field(
         name="💪 Força",
         value=formatar_atributo(
-            dados["forca"]
+            "forca", dados["forca"], dados.get("raca"), dados.get("familia")
         ),
         inline=True
     )
@@ -83,7 +57,7 @@ def embed_atributos(dados):
     embed.add_field(
         name="🛡️ Resistência",
         value=formatar_atributo(
-            dados["resistencia"]
+            "resistencia", dados["resistencia"], dados.get("raca"), dados.get("familia")
         ),
         inline=True
     )
@@ -91,7 +65,7 @@ def embed_atributos(dados):
     embed.add_field(
         name="💨 Velocidade/Agilidade",
         value=formatar_atributo(
-            dados["velocidade"]
+            "velocidade", dados["velocidade"], dados.get("raca"), dados.get("familia")
         ),
         inline=True
     )

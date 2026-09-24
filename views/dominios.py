@@ -1,6 +1,8 @@
 import discord
 
 from data.profissoes import PROFISSOES
+from data.classes import CLASSES
+from data.skills import ESTILOS
 
 
 # =========================================================
@@ -71,6 +73,28 @@ def formatar_nome_dominio(dominio):
 
     return f"{formatar_tipo(tipo)} • {nome}"
 
+
+
+def progressao_dominio(tipo, nome, porcentagem):
+    tipo=(tipo or "").lower(); itens=[]
+    if tipo=="profissao":
+        itens=PROFISSOES.get(nome,{}).get("estagios",[])
+        norm=[(i.get("porcentagem",0),i.get("emoji","•"),i.get("nome","Etapa"),i.get("descricao","")) for i in itens]
+    elif tipo=="estilo":
+        itens=ESTILOS.get(nome,{}).get("skills",[])
+        if not itens:
+            itens=[{"pct":25,"nome":"Fundamentos","descricao":"Domínio dos fundamentos do estilo."},{"pct":50,"nome":"Técnica Intermediária","descricao":"Aprofundamento técnico do estilo."},{"pct":75,"nome":"Técnica Avançada","descricao":"Aplicação avançada do estilo."},{"pct":100,"nome":"Maestria","descricao":"Domínio completo do estilo."}]
+        norm=[(i.get("pct",0),"💥",i.get("nome","Técnica"),i.get("descricao","")) for i in itens]
+    elif tipo=="classe":
+        esp=CLASSES.get(nome,{}).get("especialidade","")
+        norm=[(25,"⚪","Fundamentos",esp),(50,"🔵","Especialização",esp),(75,"🟣","Domínio Avançado",esp),(100,"🟡","Maestria",esp)]
+    else:
+        return ""
+    linhas=[]
+    for pct,emoji,titulo,desc in norm:
+        estado="✅" if porcentagem>=pct else "🔒"
+        linhas.append(f"{estado} **{pct}% • {titulo}**\n└ {desc}")
+    return "\n".join(linhas)[:1000]
 
 # =========================================================
 # EMBED
@@ -181,6 +205,10 @@ def criar_embed_dominios(dados, dominio_selecionado=None):
             ),
             inline=False
         )
+
+        progressao = progressao_dominio(tipo, nome, porcentagem)
+        if progressao:
+            embed.add_field(name="🧭 Progressão e Benefícios", value=progressao, inline=False)
 
     embed.set_footer(
         text=(

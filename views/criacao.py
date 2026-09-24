@@ -2,6 +2,11 @@ import random
 import discord
 
 from data.skills import ESTILOS as CATALOGO_ESTILOS
+from data.racas import RACAS as CATALOGO_RACAS
+from data.familias import FAMILIAS as CATALOGO_FAMILIAS
+from data.profissoes import PROFISSOES as CATALOGO_PROFISSOES
+from data.classes import CLASSES as CATALOGO_CLASSES
+from data.sistema import estilo_disponivel_criacao, FAMILIAS_VONTADE_D
 
 
 # =========================================================
@@ -38,72 +43,11 @@ criando = {}
 # OPÇÕES
 # =========================================================
 
-RACAS = [
-    "Humano",
-    "Homem-Peixe",
-    "Tritão",
-    "Gigante",
-    "Mink",
-    "Skypiean",
-    "Birkan",
-    "Shandian",
-    "Longarm",
-    "Longleg",
-    "Three-Eye",
-]
-
-FAMILIAS = [
-    "Monkey",
-    "Nefertari",
-    "Kozuki",
-    "Shimotsuki",
-    "Vinsmoke",
-    "Donquixote",
-    "Figarland",
-    "Charlotte",
-    "Rocks",
-    "Gol",
-    "Neptune",
-    "Rosward",
-    "Saint",
-    "Manmayer",
-    "Riku",
-    "Nerona",
-    "Kaido",
-    "Crocodile",
-    "Enel",
-    "Sengoku",
-    "Sakazuki",
-    "Borsalino",
-    "Smoker",
-]
-
-FACCOES = [
-    "Pirata",
-    "Marinha",
-    "Revolucionário",
-    "Caçador de Recompensas",
-    "Civil",
-]
-
-PROFISSOES = [
-    "Navegador",
-    "Carpinteiro",
-    "Médico",
-    "Cozinheiro",
-    "Arqueólogo",
-    "Cientista",
-]
-
-CLASSES = [
-    "Espadachim",
-    "Lutador",
-    "Atirador",
-    "Guardião",
-    "Berserker",
-    "Usuário de Akuma no Mi",
-    "Usuário de Haki",
-]
+RACAS = list(CATALOGO_RACAS.keys())
+FAMILIAS = list(CATALOGO_FAMILIAS.keys())
+FACCOES = ["Pirata", "Marinha", "Revolucionário", "Caçador de Recompensas", "Civil"]
+PROFISSOES = list(CATALOGO_PROFISSOES.keys())
+CLASSES = list(CATALOGO_CLASSES.keys())
 
 
 def _nomes_estilos():
@@ -164,6 +108,7 @@ def novo_rascunho():
 
         "raca_sorteada": False,
         "familia_sorteada": False,
+        "vontade_d": False,
     }
 
 
@@ -194,6 +139,14 @@ def aplicar_beneficios_familia(dados):
     if familia in FAMILIAS_PRODIGIO:
         dados["prodigio"] = True
         dados["prodigio_sorteado"] = True
+
+    dados["vontade_d"] = familia in FAMILIAS_VONTADE_D
+    if familia == "Vinsmoke":
+        dados["raca"] = "Corpo Modificado"
+        dados["raca_sorteada"] = True
+    elif familia == "Enel":
+        dados["raca"] = "Birkan"
+        dados["raca_sorteada"] = True
 
 
 # =========================================================
@@ -836,12 +789,18 @@ class EstiloSelect(discord.ui.Select):
     def __init__(self, dono_id, confirmar_callback):
         self.dono_id = dono_id
         self.confirmar_callback = confirmar_callback
-        options = [discord.SelectOption(label=item[:100], value=item) for item in ESTILOS[:25]]
+        dados = obter_rascunho(dono_id)
+        permitidos = [item for item in ESTILOS if estilo_disponivel_criacao(item, dados.get("raca")) and (item == "Free Style" or not dados.get("classe") or CATALOGO_ESTILOS.get(item, {}).get("categoria") == dados.get("classe"))]
+        options = [discord.SelectOption(label=item[:100], value=item) for item in permitidos[:25]]
         super().__init__(placeholder="Escolha seu estilo de luta inicial", options=options)
 
     async def callback(self, interaction):
         dados = obter_rascunho(interaction.user.id)
-        dados["estilo"] = self.values[0]
+        escolhido = self.values[0]
+        if not estilo_disponivel_criacao(escolhido, dados.get("raca")):
+            await interaction.response.send_message("❌ Esse estilo não está disponível para sua raça/condição atual.", ephemeral=True)
+            return
+        dados["estilo"] = escolhido
         await interaction.response.edit_message(
             embed=criar_embed(interaction.user),
             view=CriacaoView(self.dono_id, self.confirmar_callback)
@@ -973,7 +932,7 @@ class CriacaoView(
             return
 
         dados["raca"] = random.choice(
-            RACAS
+            [r for r in RACAS if r != "Corpo Modificado"]
         )
 
         dados["raca_sorteada"] = True
@@ -1145,6 +1104,26 @@ class CriacaoView(
         )
 
 
+    @discord.ui.button(label="Haoshoku", emoji="👑", style=discord.ButtonStyle.secondary, row=3)
+    async def revelar_haoshoku(self, interaction, button):
+        dados = obter_rascunho(interaction.user.id)
+        aplicar_beneficios_familia(dados)
+        if not dados["haoshoku_sorteado"]:
+            dados["haoshoku"] = random.randint(1,100) <= CHANCE_HAOSHOKU
+            dados["haoshoku_sorteado"] = True
+        origem = "Família" if dados.get("familia") in FAMILIAS_HAOSHOKU else "Sorteio"
+        await interaction.response.send_message(f"👑 **Haoshoku:** {'SIM' if dados['haoshoku'] else 'NÃO'}\nOrigem: **{origem}**", ephemeral=True)
+
+    @discord.ui.button(label="Prodígio", emoji="🌟", style=discord.ButtonStyle.secondary, row=3)
+    async def revelar_prodigio(self, interaction, button):
+        dados = obter_rascunho(interaction.user.id)
+        aplicar_beneficios_familia(dados)
+        if not dados["prodigio_sorteado"]:
+            dados["prodigio"] = random.randint(1,100) <= CHANCE_PRODIGIO
+            dados["prodigio_sorteado"] = True
+        origem = "Família" if dados.get("familia") in FAMILIAS_PRODIGIO else "Sorteio"
+        await interaction.response.send_message(f"🌟 **Prodígio:** {'SIM' if dados['prodigio'] else 'NÃO'}\nOrigem: **{origem}**", ephemeral=True)
+
     # =====================================================
     # CONFIRMAR
     # =====================================================
@@ -1153,7 +1132,7 @@ class CriacaoView(
         label="Criar Personagem",
         emoji="✅",
         style=discord.ButtonStyle.success,
-        row=3
+        row=4
     )
     async def confirmar(
         self,
@@ -1182,6 +1161,10 @@ class CriacaoView(
 
             if not dados.get(chave):
                 faltando.append(nome)
+
+        if dados.get("estilo") and not estilo_disponivel_criacao(dados["estilo"], dados.get("raca")):
+            await interaction.response.send_message("❌ Seu estilo inicial não atende mais aos requisitos da raça/condição atual. Escolha outro estilo.", ephemeral=True)
+            return
 
         if faltando:
 
