@@ -113,6 +113,9 @@ async def criar_tabelas():
                 prodigio BOOLEAN NOT NULL
                     DEFAULT FALSE,
 
+                vontade_d BOOLEAN NOT NULL DEFAULT FALSE,
+                joyboy BOOLEAN NOT NULL DEFAULT FALSE,
+
                 forca INTEGER NOT NULL
                     DEFAULT 0,
 
@@ -208,6 +211,9 @@ async def criar_tabelas():
             NOT NULL DEFAULT FALSE;
             """,
 
+            """ALTER TABLE fichas ADD COLUMN IF NOT EXISTS vontade_d BOOLEAN NOT NULL DEFAULT FALSE;""",
+            """ALTER TABLE fichas ADD COLUMN IF NOT EXISTS joyboy BOOLEAN NOT NULL DEFAULT FALSE;""",
+
             """
             ALTER TABLE fichas
             ADD COLUMN IF NOT EXISTS forca INTEGER
@@ -242,6 +248,11 @@ async def criar_tabelas():
             ALTER TABLE fichas
             ADD COLUMN IF NOT EXISTS reputacao BIGINT
             NOT NULL DEFAULT 0;
+            """,
+
+            """
+            ALTER TABLE fichas
+            ADD COLUMN IF NOT EXISTS rank_manual TEXT;
             """
         ]
 
@@ -694,6 +705,8 @@ async def criar_ficha(
     despertar="Não",
     haoshoku=False,
     prodigio=False,
+    vontade_d=False,
+    joyboy=False,
     imagem=None,
     forca=0,
     resistencia=0,
@@ -724,6 +737,8 @@ async def criar_ficha(
                     despertar,
                     haoshoku,
                     prodigio,
+                    vontade_d,
+                    joyboy,
                     forca,
                     resistencia,
                     velocidade,
@@ -733,7 +748,7 @@ async def criar_ficha(
                 VALUES (
                     $1, $2, $3, $4, $5, $6,
                     $7, $8, $9, $10, $11, $12,
-                    $13, $14, $15, $16, $17, $18
+                    $13, $14, $15, $16, $17, $18, $19, $20
                 );
                 """,
                 user_id,
@@ -750,6 +765,8 @@ async def criar_ficha(
                 despertar,
                 haoshoku,
                 prodigio,
+                vontade_d,
+                joyboy,
                 forca,
                 resistencia,
                 velocidade,
@@ -1487,6 +1504,11 @@ async def adicionar_reputacao(
                 )
 
 
+async def definir_rank_manual(user_id, rank):
+    db = get_pool()
+    return await db.execute("UPDATE fichas SET rank_manual=$1 WHERE user_id=$2;", rank, user_id)
+
+
 # =========================================================
 # MUNDO PERSISTENTE — NPCS / MEMÓRIAS
 # =========================================================
@@ -2137,6 +2159,13 @@ async def aplicar_impacto_reputacao(
         RETURNING *;
         """,
         personagem_nome, delta_marinha, delta_governo, delta_piratas, delta_civis, localizacao
+    )
+
+    # A ficha usa reputação geral para Rank. Cada acontecimento confirmado
+    # acrescenta reputação pela relevância, sem substituir relações por facção.
+    await db.execute(
+        "UPDATE fichas SET reputacao = reputacao + $1 WHERE LOWER(nome)=LOWER($2);",
+        g * 10, personagem_nome
     )
 
     # Pressão estatal nasce de hostilidade/registro, não de "fama" genérica.
