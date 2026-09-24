@@ -211,7 +211,10 @@ async def ajuda(ctx):
 `!rotas` / `!viajar <destino>` — navegar
 `!viagemstatus` / `!resolverviagem` — viagem
 `!navio` / `!repararnavio` — embarcação
-`!pescar` — pesca""",inline=False)
+`!pescar` — pesca com localização, cooldown e progressão de Pescador
+`!tesouro` — usa um Mapa de Tesouro
+`!roubar <alvo>` — tentativa de roubo contra NPC/estabelecimento
+`!formas` / `!transformar <forma>` — transformações desbloqueadas""",inline=False)
     embed.add_field(name="💰 Economia",value="""`!loja` — comércio local
 `!estaleiro` — comprar embarcação
 `!contratar <função> <nome>` — subordinado
