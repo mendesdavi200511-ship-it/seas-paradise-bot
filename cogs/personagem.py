@@ -32,6 +32,8 @@ from views.dominios import (
 )
 
 from data.profissoes import PROFISSOES
+from data.sistema import atributo_efetivo, rank_por_reputacao, proximo_rank, TALENTOS_AUTOMATICOS, FAMILIAS_VONTADE_D, aplicar_pisos_iniciais
+from data.skills import ESTILOS
 
 
 # =========================================================
@@ -59,38 +61,12 @@ def formatar_numero(valor):
     return f"{valor:,}".replace(",", ".")
 
 
-ESCALA_ATRIBUTOS = [
-    (50000, "Lendário"),
-    (25000, "Titânico"),
-    (10000, "Sobre-Humano"),
-    (5000, "Monstruoso"),
-    (2000, "Excepcional"),
-    (1000, "Muito Forte"),
-    (600, "Forte"),
-    (350, "Bom"),
-    (200, "Mediano"),
-    (100, "Normal"),
-    (50, "Fraco"),
-    (20, "Muito Fraco"),
-]
-
-
-def nivel_atributo(valor):
-
-    for minimo, nome in ESCALA_ATRIBUTOS:
-
-        if valor >= minimo:
-            return nome
-
-    return "Muito Fraco"
-
-
-def formatar_atributo(valor):
-
-    return (
-        f"{formatar_numero(valor)} — "
-        f"**{nivel_atributo(valor)}**"
-    )
+def formatar_atributo(tipo, valor, raca=None, familia=None):
+    info, bonus, efetivo = atributo_efetivo(tipo, valor, raca, familia)
+    texto = f"**{info['nome']}** • `{formatar_numero(valor)} pts` • {formatar_numero(info['valor'])} {info['unidade']}"
+    if bonus:
+        texto += f" • **+{bonus}% → {formatar_numero(efetivo)} {info['unidade']}**"
+    return texto
 
 
 def valor_seguro(
@@ -456,7 +432,9 @@ async def criar_embed_ficha(
 
             f"{emoji_sim_nao(prodigio)} "
             f"**Prodígio:** "
-            f"{formatar_sim_nao(prodigio)}"
+            f"{formatar_sim_nao(prodigio)}\n"
+            f"🔥 **Vontade do D.:** {formatar_sim_nao(valor_seguro(personagem, 'vontade_d', False))}\n"
+            f"🌅 **Vontade de JoyBoy:** {formatar_sim_nao(valor_seguro(personagem, 'joyboy', False))}"
         ),
         inline=False
     )
@@ -469,13 +447,13 @@ async def criar_embed_ficha(
         name="⚔️ Atributos",
         value=(
             f"💪 **Força:** "
-            f"{formatar_atributo(personagem['forca'])}\n"
+            f"{formatar_atributo('forca', personagem['forca'], personagem['raca'], personagem['familia'])}\n"
 
             f"🛡️ **Resistência:** "
-            f"{formatar_atributo(personagem['resistencia'])}\n"
+            f"{formatar_atributo('resistencia', personagem['resistencia'], personagem['raca'], personagem['familia'])}\n"
 
             f"💨 **Velocidade/Agilidade:** "
-            f"{formatar_atributo(personagem['velocidade'])}\n\n"
+            f"{formatar_atributo('velocidade', personagem['velocidade'], personagem['raca'], personagem['familia'])}\n\n"
 
             f"✨ **Pontos disponíveis:** "
             f"{formatar_numero(personagem['pontos_atributo'])}"
@@ -582,13 +560,14 @@ async def criar_embed_ficha(
         inline=True
     )
 
+    reputacao = personagem["reputacao"]
+    rank_manual = valor_seguro(personagem, "rank_manual", None)
+    rank = rank_manual or rank_por_reputacao(reputacao)
+    prox_nome, prox_valor = proximo_rank(reputacao)
+    progresso = f"\n└ Próximo: **{prox_nome}** em {formatar_numero(prox_valor)}" if prox_nome and not rank_manual else ""
     embed.add_field(
-        name="⭐ Reputação",
-        value=(
-            formatar_numero(
-                personagem["reputacao"]
-            )
-        ),
+        name="🏆 Reputação",
+        value=f"**{formatar_numero(reputacao)} pts**\n└ Rank: **{rank}**{progresso}",
         inline=True
     )
 
@@ -692,6 +671,12 @@ async def criar_dominios_iniciais(
             desbloqueado_por="criacao"
         )
 
+    # Talentos adicionais declarados pelos catálogos de raça/família.
+    for origem, chave in (("raca", dados.get("raca")), ("familia", dados.get("familia"))):
+        for categoria, nome in TALENTOS_AUTOMATICOS.get(origem, {}).get(chave, []):
+            limite = limite_profissao(nome) if categoria == "profissao" else (999999 if categoria == "haki" else 100)
+            await adicionar_especializacao(user_id=user_id, categoria=categoria, nome=nome, limite=limite, desbloqueado_por=f"{origem}:{chave}")
+
 
 # =========================================================
 # CALLBACK — CONFIRMAR CRIAÇÃO
@@ -772,6 +757,8 @@ async def confirmar_criacao(
 
     try:
 
+        aplicar_pisos_iniciais(dados)
+
         await criar_ficha(
             user_id=user_id,
             nome=dados["nome"],
@@ -785,6 +772,8 @@ async def confirmar_criacao(
             estilo=estilo,
             haoshoku=haoshoku,
             prodigio=prodigio,
+            vontade_d=bool(dados.get("vontade_d")),
+            joyboy=False,
             forca=dados["forca"],
             resistencia=dados["resistencia"],
             velocidade=dados["velocidade"],
@@ -996,6 +985,17 @@ class EditarFichaView(
             interaction
         )
 
+    @discord.ui.button(label="Reputação", emoji="🏆", style=discord.ButtonStyle.secondary, row=0)
+    async def reputacao(self, interaction, button):
+        ficha=await buscar_ficha(interaction.user.id)
+        rep=ficha["reputacao"]; manual=valor_seguro(ficha,"rank_manual",None); rank=manual or rank_por_reputacao(rep); prox,valor=proximo_rank(rep)
+        texto=f"**{formatar_numero(rep)} pontos**\n\n🏅 Rank atual: **{rank}**"
+        if prox and not manual: texto += f"\n📈 Próximo Rank: **{prox}** em **{formatar_numero(valor)}**"
+        if manual: texto += "\n🔧 Rank definido manualmente pela administração."
+        embed=discord.Embed(title="🏆 REPUTAÇÃO",description=texto)
+        embed.set_footer(text="Sea's Paradise • Sua reputação cresce com acontecimentos reconhecidos no mundo")
+        await interaction.response.edit_message(embed=embed,view=EditarFichaView(self.dono_id))
+
     @discord.ui.button(
         label="Domínios",
         emoji="📈",
@@ -1073,6 +1073,8 @@ async def abrir_atributos(
         "resistencia": ficha["resistencia"],
         "velocidade": ficha["velocidade"],
         "pontos": ficha["pontos_atributo"],
+        "raca": ficha["raca"],
+        "familia": ficha["familia"],
     }
 
     view = AtributosView(
@@ -1632,6 +1634,8 @@ class Personagem(
             "resistencia": ficha["resistencia"],
             "velocidade": ficha["velocidade"],
             "pontos": ficha["pontos_atributo"],
+            "raca": ficha["raca"],
+            "familia": ficha["familia"],
         }
 
         view = AtributosView(

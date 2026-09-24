@@ -11,11 +11,13 @@ from database.database import (
     adicionar_berries,
     adicionar_reputacao,
     buscar_especializacoes,
+    definir_rank_manual,
 )
 
 from data.classes import CLASSES
 from data.skills import ESTILOS
 from data.profissoes import PROFISSOES
+from data.sistema import RANKS_REPUTACAO, rank_por_reputacao
 
 
 # =========================================================
@@ -757,68 +759,45 @@ class EspecializacaoManualModal(
 # REMOVER ESPECIALIZAÇÃO
 # =========================================================
 
-class RemoverEspecializacaoModal(
-    discord.ui.Modal,
-    title="Remover Especialização"
-):
+class RemoverEspecializacaoSelect(discord.ui.Select):
+    def __init__(self, membro, especializacoes):
+        self.membro=membro
+        opcoes=[]
+        for item in especializacoes[:25]:
+            valor=f"{item['categoria']}|{item['nome']}"
+            opcoes.append(discord.SelectOption(label=f"{item['categoria'].title()} • {item['nome']}"[:100], value=valor[:100], description=f"{item['porcentagem']}%"))
+        super().__init__(placeholder="Selecione exatamente o que deseja remover", options=opcoes)
+    async def callback(self, interaction):
+        categoria,nome=self.values[0].split("|",1)
+        resultado=await remover_especializacao(self.membro.id,categoria,nome)
+        await interaction.response.send_message((f"🗑️ **{nome}** removido de {self.membro.mention}." if resultado != "DELETE 0" else "❌ Especialização não encontrada."), ephemeral=True)
 
-    categoria = discord.ui.TextInput(
-        label="Categoria",
-        placeholder="Ex: estilo"
-    )
+class RemoverEspecializacaoView(discord.ui.View):
+    def __init__(self,dono_id,membro,especializacoes):
+        super().__init__(timeout=300); self.dono_id=dono_id; self.add_item(RemoverEspecializacaoSelect(membro,especializacoes))
+    async def interaction_check(self,interaction):
+        if interaction.user.id != self.dono_id or not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Apenas o administrador deste painel pode usar esta seleção.",ephemeral=True); return False
+        return True
 
-    nome = discord.ui.TextInput(
-        label="Nome",
-        placeholder="Ex: Ittoryu"
-    )
 
-    def __init__(
-        self,
-        membro
-    ):
+class RankSelect(discord.ui.Select):
+    def __init__(self,membro):
+        self.membro=membro
+        opts=[discord.SelectOption(label="Automático pela reputação",value="__auto__",emoji="🔄")]
+        opts += [discord.SelectOption(label=nome,value=nome,description=f"A partir de {minimo} de reputação") for minimo,nome in RANKS_REPUTACAO]
+        super().__init__(placeholder="Defina o Rank do jogador",options=opts[:25])
+    async def callback(self,interaction):
+        valor=self.values[0]; await definir_rank_manual(self.membro.id, None if valor=="__auto__" else valor)
+        await interaction.response.send_message(f"🏆 Rank de {self.membro.mention}: **{'Automático' if valor=='__auto__' else valor}**",ephemeral=True)
 
-        super().__init__()
-
-        self.membro = membro
-
-    async def on_submit(
-        self,
-        interaction
-    ):
-
-        categoria = (
-            self.categoria.value
-            .strip()
-            .lower()
-        )
-
-        nome = (
-            self.nome.value.strip()
-        )
-
-        resultado = (
-            await remover_especializacao(
-                self.membro.id,
-                categoria,
-                nome
-            )
-        )
-
-        if resultado == "DELETE 0":
-
-            await interaction.response.send_message(
-                "❌ Essa especialização "
-                "não foi encontrada.",
-                ephemeral=True
-            )
-
-            return
-
-        await interaction.response.send_message(
-            f"🗑️ **{nome}** removido de "
-            f"{self.membro.mention}.",
-            ephemeral=True
-        )
+class RankAdminView(discord.ui.View):
+    def __init__(self,dono_id,membro):
+        super().__init__(timeout=300); self.dono_id=dono_id; self.add_item(RankSelect(membro))
+    async def interaction_check(self,interaction):
+        if interaction.user.id != self.dono_id or not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Sem permissão.",ephemeral=True); return False
+        return True
 
 
 # =========================================================
@@ -1144,10 +1123,13 @@ class EspecializacoesAdminView(
         button
     ):
 
-        await interaction.response.send_modal(
-            RemoverEspecializacaoModal(
-                self.membro
-            )
+        especializacoes = list(await buscar_especializacoes(self.membro.id))
+        if not especializacoes:
+            await interaction.response.send_message("❌ Esse jogador não possui especializações para remover.", ephemeral=True)
+            return
+        await interaction.response.edit_message(
+            embed=discord.Embed(title="🗑️ REMOVER ESPECIALIZAÇÃO", description="Selecione abaixo exatamente o domínio que deseja remover."),
+            view=RemoverEspecializacaoView(self.dono_id, self.membro, especializacoes)
         )
 
     @discord.ui.button(
@@ -1322,6 +1304,13 @@ class AdminView(
             ReputacaoModal(
                 self.membro
             )
+        )
+
+    @discord.ui.button(label="Rank", emoji="🏆", style=discord.ButtonStyle.secondary, row=3)
+    async def rank(self, interaction, button):
+        await interaction.response.edit_message(
+            embed=discord.Embed(title="🏆 EDITAR RANK", description=f"Escolha o Rank de {self.membro.mention}. Use **Automático** para voltar ao Rank calculado pela reputação."),
+            view=RankAdminView(self.dono_id,self.membro)
         )
 
     @discord.ui.button(
