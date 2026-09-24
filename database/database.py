@@ -743,6 +743,12 @@ async def criar_tabelas():
         await conn.execute("""CREATE TABLE IF NOT EXISTS sorteios_diarios (id BIGSERIAL PRIMARY KEY, premio TEXT NOT NULL, valor INTEGER NOT NULL DEFAULT 0, mensagem_id BIGINT, encerra_em TIMESTAMPTZ NOT NULL, status TEXT DEFAULT 'aberto', vencedor_user_id BIGINT);""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS participantes_sorteio (sorteio_id BIGINT REFERENCES sorteios_diarios(id) ON DELETE CASCADE, user_id BIGINT NOT NULL, PRIMARY KEY(sorteio_id,user_id));""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS bosses_rp_ativos (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, boss_nome TEXT NOT NULL, localizacao TEXT NOT NULL, rank TEXT NOT NULL, hp_max INTEGER NOT NULL, hp_atual INTEGER NOT NULL, falhas INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT 'ativo', iniciado_em TIMESTAMPTZ DEFAULT NOW(), finalizado_em TIMESTAMPTZ);""")
+        # Boss de progressão 56: combate completo, sem afetar o mundo canônico.
+        await conn.execute("ALTER TABLE bosses_rp_ativos ADD COLUMN IF NOT EXISTS player_hp_max INTEGER;")
+        await conn.execute("ALTER TABLE bosses_rp_ativos ADD COLUMN IF NOT EXISTS player_hp_atual INTEGER;")
+        await conn.execute("ALTER TABLE bosses_rp_ativos ADD COLUMN IF NOT EXISTS boss_estilo TEXT;")
+        await conn.execute("ALTER TABLE bosses_rp_ativos ADD COLUMN IF NOT EXISTS turno INTEGER NOT NULL DEFAULT 1;")
+        await conn.execute("ALTER TABLE bosses_rp_ativos ADD COLUMN IF NOT EXISTS player_focus INTEGER NOT NULL DEFAULT 0;")
         await conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS uq_boss_rp_user_ativo ON bosses_rp_ativos(user_id) WHERE status='ativo';""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS recompensas_npc_marcante (user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, npc_nome TEXT NOT NULL, instancia TEXT NOT NULL DEFAULT 'mundo', recebido_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(user_id,npc_nome,instancia));""")
         await conn.execute("""CREATE INDEX IF NOT EXISTS idx_boss_rp_user_status ON bosses_rp_ativos(user_id,status);""")
