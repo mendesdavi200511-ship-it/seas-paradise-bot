@@ -215,6 +215,8 @@ async def ajuda(ctx):
 `!rotas` / `!viajar <destino>` — navegar
 `!viagemstatus` / `!resolverviagem` — viagem
 `!navio` / `!repararnavio` — embarcação
+`!embarcar` / `!desembarcar` — entrar/sair de um embarque antes da partida
+`!embarquestatus` / `!partir` / `!cancelarviagem` — organizar viagem coletiva
 `!pescar` — pesca com localização, cooldown e progressão de Pescador
 `!tesouro` — usa um Mapa de Tesouro
 `!roubar <alvo>` — tentativa de roubo contra NPC/estabelecimento
@@ -222,7 +224,9 @@ async def ajuda(ctx):
     embed.add_field(name="💰 Economia",value="""`!loja` — comércio local
 `!doar <item> @player [qtd]` — doar item
 `!procurar-akuma` — busca diária por Akuma
-`!tripulacao` — tripulações
+`!tripulacao` — painel e membros da sua tripulação
+`!tripulacao criar/entrar/sair` — gestão básica
+`!tripulacao cargo/expulsar/capitao` — comandos do Capitão
 `!organizacoes` — organizações
 `!alcunhas` — alcunhas conquistadas
 `!estaleiro` — comprar embarcação
