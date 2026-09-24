@@ -220,14 +220,35 @@ def estilos_por_classe(classe):
 def quantidade_estilos():
     return len(ESTILOS)
 
-# Progressão padrão para estilos cujo catálogo antigo ainda não possuía técnicas
-# individualizadas. Mantém o estilo utilizável agora sem inventar golpes canônicos;
-# técnicas autorais/específicas podem substituir estes marcos depois.
-for _nome, _dados in ESTILOS.items():
-    if not _dados.get("skills"):
-        _dados["skills"] = [
-            {"pct": 25, "nome": "Fundamentos", "descricao": f"Domínio dos fundamentos de {_nome}."},
-            {"pct": 50, "nome": "Técnica Intermediária", "descricao": f"Aplicação intermediária de {_nome}."},
-            {"pct": 75, "nome": "Técnica Avançada", "descricao": f"Aplicação avançada de {_nome}."},
-            {"pct": 100, "nome": "Maestria", "descricao": f"Domínio completo de {_nome}."},
-        ]
+# Progressões específicas: cada estilo mostra o que ele realmente desenvolve, sem texto genérico.
+_SKILLS_ESPECIFICAS = {
+"Ittoryu":[("Corte de Uma Lâmina","Postura, saque e cortes precisos com uma espada."),("Corte à Distância","Projeta a força do corte para alcançar alvos além da lâmina."),("Corte de Alta Potência","Concentra força e técnica em golpes capazes de atravessar defesas superiores."),("Maestria Ittoryu","Controle completo de uma única espada, alcance, precisão e potência.")],
+"Nitoryu":[("Dupla Lâmina","Coordena duas espadas simultaneamente em ataque e defesa."),("Cortes Cruzados","Combina trajetórias das duas lâminas para pressionar múltiplos ângulos."),("Fluxo Ofensivo Duplo","Mantém sequências rápidas sem perder guarda."),("Maestria Nitoryu","Domínio completo do combate com duas espadas.")],
+"Santoryu":[("Três Lâminas","Coordena duas mãos e a terceira espada na boca."),("Oni Giri","Investida de três cortes convergentes."),("Tatsu Maki","Cortes giratórios capazes de gerar forte pressão ao redor."),("Maestria Santoryu","Domínio pleno das três lâminas e técnicas combinadas.")],
+"Oden Nitoryu":[("Postura Oden Nitoryu","Base de duas espadas voltada a golpes extremamente pesados."),("Corte Duplo","Executa ataques simultâneos com ambas as lâminas."),("Togen Shirataki","Corte duplo de enorme potência."),("Togen Totsuka","Técnica máxima cadastrada do Oden Nitoryu.")],
+"Foxfire Style":[("Corte Flamejante","Executa cortes associados ao fogo."),("Cortar Chamas","Permite cortar e dispersar fogo com a espada."),("Defesa Contra Fogo","Usa a técnica para interceptar ataques flamejantes."),("Maestria Foxfire","Integra corte, fogo e defesa contra chamas em alto nível.")],
+"Kappa Style":[("Esgrima Kappa","Base técnica de espada do estilo de Kawamatsu."),("Sumô com Espada","Combina estabilidade corporal e cortes pesados."),("Cortes de Pressão","Amplia alcance e impacto dos golpes."),("Maestria Kappa","Domínio completo da esgrima e força corporal do estilo.")],
+"Hanauta Style":[("Passo Musical","Movimentação leve e ritmada para preparar o saque."),("Corte de Passagem","Golpe executado ao ultrapassar o alvo em alta velocidade."),("Saque Fantasma","Aumenta drasticamente a velocidade do corte e dificulta sua leitura."),("Maestria Hanauta","Esgrima de velocidade extrema com execução quase imperceptível.")],
+"Fish-Man Karate":[("Golpes Aquáticos","Transmite impacto usando a água presente no ambiente e nos corpos."),("Uchimizu","Arremessa gotas d’água como projéteis de alta força."),("Karakusagawara Seiken","Propaga um impacto poderoso através da umidade do ambiente."),("Maestria do Karatê Tritão","Controle avançado de golpes físicos e ondas de impacto aquáticas.")],
+"Fish-Man Jujutsu":[("Manipulação de Água","Agarra e conduz massas de água como extensão do corpo."),("Correntes Aquáticas","Redireciona água para atacar ou controlar movimento."),("Arremesso Oceânico","Usa grandes volumes de água como força de projeção."),("Maestria Jujutsu Tritão","Controle avançado da água disponível para combate e contenção.")],
+"Hasshoken":[("Vibração Corporal","Transmite vibrações destrutivas através dos golpes."),("Impacto Vibratório","Atravessa parcialmente defesas físicas com vibração."),("Onda de Choque","Espalha a vibração para uma área maior."),("Maestria Hasshoken","Controle refinado da vibração ofensiva e defensiva.")],
+"Ryusoken":[("Garras do Dragão","Fortalece dedos e pegada para esmagar e perfurar."),("Dragon Claw","Golpe de garra concentrado contra pontos resistentes."),("Dragon Breath","Impacto destrutivo transmitido ao alvo/estrutura."),("Maestria Ryusoken","Domínio de esmagamento, perfuração e impacto do estilo.")],
+"Okama Kenpo":[("Passos Okama","Movimentação acrobática e imprevisível."),("Chutes Acrobáticos","Combina giros, saltos e chutes em sequência."),("Esquiva Flexível","Usa mobilidade corporal para evitar e reposicionar."),("Maestria Okama Kenpo","Domínio completo da acrobacia ofensiva do estilo.")],
+"Newkama Kenpo":[("Newkama Step","Movimentação e aceleração superiores do Newkama."),("Death Wink","Rajada de pressão gerada pelo piscar."),("Hell Wink","Versão muito mais poderosa da rajada de pressão."),("Maestria Newkama","Domínio das técnicas corporais e rajadas de pressão do estilo.")],
+"Jao Kun Do":[("Combate de Pernas","Base marcial focada em chutes rápidos e alcance."),("Sequência de Chutes","Encadeia ataques sem perder mobilidade."),("Chute de Impacto","Concentra força em golpes de grande potência."),("Maestria Jao Kun Do","Domínio completo do combate marcial de pernas.")],
+"Electro":[("Eletricidade Mink","Canaliza a eletricidade natural do corpo Mink."),("Electro em Golpes","Reveste ataques físicos com descarga elétrica."),("Electro em Armas","Conduz eletricidade por armas/objetos compatíveis."),("Maestria Electro","Controle avançado da descarga elétrica racial.")],
+"Tontatta Fight":[("Força Tontatta","Explora a força física desproporcional da raça."),("Mobilidade Minúscula","Usa tamanho e agilidade para atacar pontos difíceis."),("Investida Tontatta","Combina velocidade e força em ataques explosivos."),("Maestria Tontatta","Domínio completo das vantagens físicas raciais em combate.")],
+"Sniper Fighting":[("Mira de Longa Distância","Engaja alvos com precisão em grande alcance."),("Leitura de Trajetória","Compensa movimento, distância e queda do projétil."),("Tiro de Precisão","Ataca pontos específicos sob pressão."),("Maestria Sniper","Controle avançado de alcance, trajetória e precisão.")],
+"Gun Fighting":[("Manuseio de Armas","Saque, recarga e disparo eficiente."),("Tiro em Movimento","Mantém precisão enquanto se reposiciona."),("Rajada Controlada","Encadeia disparos mantendo controle do alvo."),("Maestria Gun Fighting","Domínio completo de armas de fogo no combate.")],
+"Archery":[("Tiro com Arco","Controle de postura, força e trajetória da flecha."),("Tiro Rápido","Dispara em sequência com menor tempo de preparação."),("Tiro de Longo Alcance","Aumenta alcance e precisão em grandes distâncias."),("Maestria do Arco","Domínio completo de cadência, alcance e precisão.")],
+"Kabuto Fighting":[("Kabuto","Opera o estilingue Kabuto com munições especiais."),("Disparo de Longo Alcance","Explora a estrutura do Kabuto para tiros distantes."),("Munição Especializada","Alterna munições conforme terreno e alvo."),("Maestria Kabuto","Domínio completo do Kabuto e suas aplicações.")],
+"Pop Green Fighting":[("Pop Green","Utiliza sementes Pop Green como munição."),("Plantas de Combate","Invoca plantas ofensivas/defensivas adequadas à semente."),("Controle de Terreno","Usa plantas para restringir rotas e criar oportunidades."),("Maestria Pop Green","Escolhe e combina Pop Greens com eficiência máxima.")],
+"Rokushiki":[("Soru/Geppo","Acesso às técnicas de movimentação do Rokushiki."),("Tekkai/Kami-e","Acesso às técnicas corporais defensivas e evasivas."),("Shigan/Rankyaku","Acesso às técnicas ofensivas perfurantes e cortantes."),("Rokuogan","Técnica avançada que libera impacto destrutivo concentrado.")],
+"Six Powers":[("Soru e Geppo","Movimentação explosiva e passos no ar."),("Tekkai e Kami-e","Endurecimento corporal e evasão flexível."),("Shigan e Rankyaku","Perfuração com os dedos e lâminas de ar com chutes."),("Rokuogan","Domínio avançado das seis técnicas e golpe de impacto.")],
+"Cipher Pol Martial Arts":[("Combate de Agente","Técnicas corporais de infiltração e neutralização."),("Mobilidade Cipher Pol","Movimentação explosiva para aproximação/evasão."),("Neutralização Letal","Golpes precisos voltados a incapacitar rapidamente."),("Agente de Elite","Integra técnicas marciais e operações de combate da Cipher Pol.")],
+"Cyborg Combat":[("Armas Incorporadas","Usa mecanismos e armas instaladas no próprio corpo."),("Propulsão Mecânica","Amplia mobilidade usando sistemas mecânicos."),("Arsenal Integrado","Combina múltiplos dispositivos em combate."),("Overdrive Ciborgue","Extrai desempenho máximo das modificações instaladas.")],
+"Pacifista Combat":[("Corpo Pacifista","Usa resistência e força do corpo modificado."),("Laser","Dispara energia pelos sistemas Pacifista quando instalados."),("Mira de Combate","Rastreia e prioriza alvos com sistemas incorporados."),("Arsenal Pacifista","Domínio completo das capacidades tecnológicas disponíveis.")],
+}
+for _nome,_lista in _SKILLS_ESPECIFICAS.items():
+    if _nome in ESTILOS:
+        ESTILOS[_nome]["skills"]=[{"pct":pct,"nome":n,"descricao":d} for pct,(n,d) in zip((25,50,75,100),_lista)]
