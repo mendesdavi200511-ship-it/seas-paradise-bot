@@ -48,7 +48,8 @@ from database.database import (
     registrar_acao_cena_sessao, listar_acoes_cena_sessao, avancar_ciclo_cena_sessao,
     buscar_combate_ativo, iniciar_combate_sessao, entrar_combate, listar_combatentes,
     registrar_acao_combate, listar_acoes_rodada, atualizar_status_combatente,
-    avancar_rodada_combate, encerrar_combate_sessao,
+    avancar_rodada_combate, encerrar_combate_sessao, atualizar_estado_cena_sessao,
+    buscar_evento_por_thread, status_participacao_evento, participar_evento_global, buscar_sessao_por_id,
 )
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -373,6 +374,9 @@ Não conceda pontos, porcentagens, itens ou recompensas numéricas aqui.
         return resposta.output_text.strip() or "Sessão encerrada."
 
     async def deve_encerrar_sessao(self, sessao_id, narracao_atual, declaracoes_atuais=""):
+        sessao_atual=await buscar_sessao_por_id(sessao_id)
+        if sessao_atual and "conflito_ativo" in sessao_atual and sessao_atual["conflito_ativo"]:
+            return False
         participantes=await listar_participantes_sessao(sessao_id,True)
         historico=await self.historico_compartilhado_sessao(sessao_id)
         entrada=f"""PARTICIPANTES ATIVOS: {', '.join(p['personagem_nome'] for p in participantes)}
@@ -422,11 +426,17 @@ MUNDO:
 {mundo}
 HISTÓRICO:
 {hist}
+ESTADO TÁTICO PERSISTENTE DA CENA:
+{sessao['estado_cena'] if 'estado_cena' in sessao and sessao['estado_cena'] else 'Ainda não consolidado.'}
 
 Resolva TODAS as declarações em UMA continuação compartilhada. Não faça uma narração isolada por player.
-Não invente ação voluntária posterior dos players. NPCs/ambiente reagem uma única vez e coerentemente.
-Se surgir combate, narre só a transição; as próximas ações usarão o sistema de combate.
-Use [ENCERRAR_SESSAO] se a sessão inteira acabou. Também use quando TODOS os participantes deste ciclo
+REGRA DE COBERTURA: cada declaração deste ciclo DEVE produzir uma consequência perceptível nesta mesma resposta. Não adie uma ação para o próximo ciclo e não omita nenhum jogador.
+Não invente ação voluntária posterior dos players.
+NPCs/ambiente possuem iniciativa. Se houver hostilidade imediata, eles DEVEM tomar uma decisão concreta coerente nesta resposta (atacar, defender, fugir, avançar, buscar cobertura, negociar, proteger alguém, chamar reforço etc.); ficar apenas mirando/cercando/reposicionando repetidamente não conta como reação.
+Combate é um ESTADO da própria cena, não um modo separado. Continue resolvendo tudo por !acao.
+Ao final emita [CONFLITO:SIM] se ainda existe confronto/perseguição/ameaça imediata que exige resolução, ou [CONFLITO:NAO] se não existe.
+Emita também [CENA_ESTADO:resumo factual curto] com posições, contenções, ferimentos, armas relevantes, coberturas e ameaças que DEVEM persistir no próximo ciclo.
+Use [ENCERRAR_SESSAO] apenas se a sessão inteira acabou E [CONFLITO:NAO]. Também use quando TODOS os participantes deste ciclo
 deixarem claramente o acontecimento atual e não houver impedimento imediato que os prenda à cena.
 Use [MORTE_PLAYER:USER_ID], [LOCAL_PLAYER:USER_ID|Local|Area] e
 [ESTADO_PLAYER:USER_ID|estado|custodia|restricoes|sim/nao] apenas quando consumados.
@@ -435,12 +445,27 @@ Seja objetivo: 2 a 6 parágrafos curtos."""
         bruto=r.output_text.strip()
         if not bruto: raise RuntimeError("Cena multiplayer vazia.")
         auto="[ENCERRAR_SESSAO]" in bruto
+        conflito_m = re.search(r"\[CONFLITO:(SIM|NAO)\]", bruto, re.I)
+        conflito = (conflito_m.group(1).upper()=="SIM") if conflito_m else bool(sessao.get("conflito_ativo", False))
+        estado_m = re.search(r"\[CENA_ESTADO:([^\]]+)\]", bruto, re.I)
+        estado_cena = estado_m.group(1).strip() if estado_m else None
         mortos={int(x) for x in re.findall(r"\[MORTE_PLAYER:(\d+)\]",bruto)}
         locais=re.findall(r"\[LOCAL_PLAYER:(\d+)\|([^\]|]+)(?:\|([^\]]*))?\]",bruto)
         estados=re.findall(r"\[ESTADO_PLAYER:(\d+)\|([^\]|]*)\|([^\]|]*)\|([^\]|]*)\|([^\]]*)\]",bruto)
         texto=re.sub(r"\[MORTE_PLAYER:\d+\]","",bruto)
         texto=re.sub(r"\[LOCAL_PLAYER:[^\]]+\]","",texto)
-        texto=re.sub(r"\[ESTADO_PLAYER:[^\]]+\]","",texto).replace("[ENCERRAR_SESSAO]","").strip()
+        texto=re.sub(r"\[ESTADO_PLAYER:[^\]]+\]","",texto)
+        texto=re.sub(r"\[CONFLITO:(?:SIM|NAO)\]","",texto,flags=re.I)
+        texto=re.sub(r"\[CENA_ESTADO:[^\]]+\]","",texto,flags=re.I).replace("[ENCERRAR_SESSAO]","").strip()
+        await atualizar_estado_cena_sessao(sessao["id"], conflito, estado_cena)
+        for pp in await listar_participantes_sessao(sessao["id"], True):
+            loc=await buscar_localizacao_jogador(pp["user_id"])
+            await definir_estado_jogador(pp["user_id"], (loc["estado"] if loc and loc["estado"] else "livre"), (loc["custodia"] if loc else None), (loc["restricoes"] if loc else None), conflito)
+        if conflito: auto=False
+        # Entrega a resposta principal antes de memórias/notoriedade/consequências secundárias.
+        # Isso reduz a latência percebida sem sacrificar persistência.
+        for parte in dividir_mensagem(texto,3800):
+            await ctx.send(embed=discord.Embed(title="📖 NARRADOR — SEA'S PARADISE",description=parte,color=discord.Color.blue()))
         coletiva=" | ".join(f"{a['personagem_nome']}: {a['acao']}" for a in acoes)
         await registrar_turno_sessao(sessao["id"],0,"Cena coletiva",coletiva,texto)
         for a in acoes:
@@ -456,8 +481,6 @@ Seja objetivo: 2 a 6 parágrafos curtos."""
                                          comb.strip().casefold() in {"sim","true","1","yes"})
         for uid in mortos:
             await marcar_participante_sessao(sessao["id"],uid,"morto"); await resetar_ficha_por_morte(uid)
-        for parte in dividir_mensagem(texto,3800):
-            await ctx.send(embed=discord.Embed(title="📖 NARRADOR — SEA'S PARADISE",description=parte,color=discord.Color.blue()))
         await avancar_ciclo_cena_sessao(sessao["id"])
         if not auto:
             try: auto=await self.deve_encerrar_sessao(sessao["id"],texto,declaracoes)
@@ -569,7 +592,8 @@ Use [ENCERRAR_SESSAO] somente se toda a narração também terminou."""
         # Eventos globais/Bosses são instâncias não-canônicas. O tópico ignora somente
         # a trava física do canal, sem alterar a localização persistente do personagem.
         evento = await evento_ativo_usuario(ctx.author.id)
-        if evento and evento['thread_id'] and int(evento['thread_id']) == int(getattr(ctx.channel,'id',0)):
+        evento_thread = await buscar_evento_por_thread(getattr(ctx.channel,'id',0))
+        if (evento and evento['thread_id'] and int(evento['thread_id']) == int(getattr(ctx.channel,'id',0))) or evento_thread:
             return True, local_canal, atual
 
         # Durante uma viagem persistente, o personagem está em alto-mar.
@@ -1148,6 +1172,8 @@ Responda SOMENTE JSON válido, sem markdown, neste formato:
         canon = await self.contexto_canonico(ctx, acao)
         participantes_txt = await self.contexto_participantes_sessao(sessao_id, ctx.author.id)
         historico_sessao = await self.historico_compartilhado_sessao(sessao_id)
+        sessao_atual = await buscar_sessao_por_id(sessao_id)
+        estado_cena_atual = (sessao_atual["estado_cena"] if sessao_atual and "estado_cena" in sessao_atual and sessao_atual["estado_cena"] else "Ainda não consolidado.")
         notoriedade = await buscar_notoriedade_personagem(ficha["nome"])
         notoriedade_txt = (
             f"Impacto={notoriedade['impacto_total']}; Marinha={notoriedade['atencao_marinha']}; "
@@ -1176,6 +1202,10 @@ SESSÃO MULTIPLAYER — PARTICIPANTES PRESENTES
 
 HISTÓRICO COMPARTILHADO DA SESSÃO
 {historico_sessao}
+
+ESTADO TÁTICO PERSISTENTE DA CENA
+{estado_cena_atual}
+REGRA: fatos deste estado continuam verdadeiros até uma ação resolvida alterá-los.
 
 AÇÃO ATUAL — SOMENTE {ficha['nome']} DECLAROU ESTA AÇÃO
 {acao}
@@ -1208,7 +1238,11 @@ REGRA DE TAMANHO DA RESPOSTA
 - Não existe limite de tripulação/participantes imposto pelo Narrador; use a lista persistente da sessão.
 - Primeiro identifique literalmente o último ato físico que o jogador declarou. Resolva somente esse ato. Não invente movimento, ataque, defesa, fala ou decisão posterior do player.
 - Se a ação do jogador for apenas preparação, fala, ameaça ou postura, a consequência concreta deve vir do ambiente/NPCs; o personagem do jogador permanece exatamente no ponto em que sua declaração terminou.
-- NPCs presentes possuem iniciativa própria e podem agir/contra-atacar nesta mesma resposta.
+- NPCs presentes possuem iniciativa própria e, diante de hostilidade imediata, DEVEM tomar uma decisão concreta nesta mesma resposta. Não repita apenas mirar, cercar ou reposicionar sem consequência.
+- Toda ação física declarada pelo jogador deve receber resultado perceptível NESTA resposta; nunca empurre a resolução dela para o turno seguinte.
+- Combate é um estado orgânico da cena; não peça ao jogador para ativar outro sistema ou usar !pronto/!resolver.
+- Ao final emita [CONFLITO:SIM] se ainda houver combate, perseguição ou ameaça imediata pendente; caso contrário [CONFLITO:NAO].
+- Emita [CENA_ESTADO:resumo factual curto] com posições, ferimentos, contenções, armas, coberturas e ameaças que precisam persistir.
 - Não use esquiva automática para preservar NPC. Não repita o mesmo bloqueio do turno anterior.
 - Consulte o HISTÓRICO: se a cena estiver estagnada, faça-a avançar agora de maneira coerente.
 - Use os atributos reais do jogador e os atributos registrados do NPC para resolver combate: Força do atacante contra Resistência do alvo; Velocidade contra Velocidade.
@@ -1242,6 +1276,11 @@ REGRA DE TAMANHO DA RESPOSTA
         morte_player = "[MORTE_PLAYER]" in narracao
         npcs_derrotados = [x.strip() for x in re.findall(r"\[NPC_DERROTADO:([^\]]+)\]", narracao) if x.strip()]
         encerrar_sessao = "[ENCERRAR_SESSAO]" in narracao
+        conflito_m = re.search(r"\[CONFLITO:(SIM|NAO)\]", narracao, re.I)
+        conflito = (conflito_m.group(1).upper()=="SIM") if conflito_m else None
+        estado_m = re.search(r"\[CENA_ESTADO:([^\]]+)\]", narracao, re.I)
+        estado_cena = estado_m.group(1).strip() if estado_m else None
+        if conflito: encerrar_sessao = False
 
         mudanca_local = None
         match_local = re.search(r"\[LOCAL_PLAYER:([^\]|]+)(?:\|([^\]]*))?\]", narracao)
@@ -1269,8 +1308,10 @@ REGRA DE TAMANHO DA RESPOSTA
         narracao = re.sub(r"\[ENCERRAR_SESSAO\]", "", narracao)
         narracao = re.sub(r"\[LOCAL_PLAYER:[^\]]+\]", "", narracao)
         narracao = re.sub(r"\[ESTADO_PLAYER:[^\]]+\]", "", narracao)
-        narracao = re.sub(r"\[NPC_DERROTADO:[^\]]+\]", "", narracao).strip()
-        return narracao, morte_player, mudanca_local, mudanca_estado, encerrar_sessao, npcs_derrotados
+        narracao = re.sub(r"\[NPC_DERROTADO:[^\]]+\]", "", narracao)
+        narracao = re.sub(r"\[CONFLITO:(?:SIM|NAO)\]", "", narracao, flags=re.I)
+        narracao = re.sub(r"\[CENA_ESTADO:[^\]]+\]", "", narracao, flags=re.I).strip()
+        return narracao, morte_player, mudanca_local, mudanca_estado, encerrar_sessao, npcs_derrotados, conflito, estado_cena
 
     @commands.command(name="acao", aliases=["ação"])
     @commands.max_concurrency(25, per=commands.BucketType.default, wait=True)
@@ -1321,21 +1362,11 @@ REGRA DE TAMANHO DA RESPOSTA
                 await ctx.send(f"⏳ Aguardando o grupo: **{len(participantes_ativos)}/{esperados}**. Os demais usam `!entrar`.")
                 return
 
-            # Se já existe combate ativo, ele continua usando o sistema próprio de rodadas.
-            combate = await buscar_combate_ativo(sessao["id"])
-            if combate:
-                await entrar_combate(combate["id"],ctx.author.id,ficha["nome"],combate["rodada"])
-                await registrar_acao_combate(combate["id"],combate["rodada"],ctx.author.id,ficha["nome"],texto,False)
-                painel=await self.painel_rodada(combate)
-                if combate["primeira_rodada"]:
-                    await ctx.send("⚔️ **Ação registrada. Rodada 1 aberta.**\n"+painel+
-                                   "\n\nOs demais entram usando `!acao`. Quando todos entrarem, use `!resolver`.")
-                    return
-                if await self.rodada_completa(combate):
-                    async with ctx.typing(): await self.resolver_rodada_coletiva(ctx,sessao,combate)
-                else:
-                    await ctx.send("⚔️ **Ação registrada.**\n"+painel)
-                return
+            # Combate agora é estado orgânico da cena. Registros antigos de rodada são
+            # encerrados para não criar um segundo jogo paralelo ao !acao.
+            combate_legado = await buscar_combate_ativo(sessao["id"])
+            if combate_legado:
+                await encerrar_combate_sessao(combate_legado["id"])
 
             ciclo = sessao["ciclo_cena"] if "ciclo_cena" in sessao else 1
             participantes_ciclo = await listar_participantes_ciclo(sessao["id"],ciclo)
@@ -1366,23 +1397,11 @@ REGRA DE TAMANHO DA RESPOSTA
                     await ctx.send("⚠️ Não consegui resolver a cena coletiva agora. As ações já registradas foram preservadas; tente `!resolvercena`.")
                 return
 
-            # SOLO: detector de combate continua imediato.
-            try:
-                if await self.detectar_intencao_combate(texto):
-                    combate = await iniciar_combate_sessao(sessao["id"])
-            except Exception as erro_detector:
-                print(f"⚠️ Detector de combate falhou: {erro_detector}")
-            if combate:
-                await entrar_combate(combate["id"],ctx.author.id,ficha["nome"],combate["rodada"])
-                await registrar_acao_combate(combate["id"],combate["rodada"],ctx.author.id,ficha["nome"],texto,False)
-                await ctx.send("⚔️ **Ação registrada. Rodada 1 aberta.**\n"+await self.painel_rodada(combate)+
-                               "\n\nUse `!resolver` para resolver a rodada.")
-                return
-
+            # SOLO também usa o mesmo fluxo narrativo vivo; hostilidade é estado da cena.
             especializacoes = list(await buscar_especializacoes(ctx.author.id))
             try:
                 async with ctx.typing():
-                    narracao, morte_player, mudanca_local, mudanca_estado, encerrar_sessao_auto, npcs_derrotados = await self.gerar_narracao(
+                    narracao, morte_player, mudanca_local, mudanca_estado, encerrar_sessao_auto, npcs_derrotados, conflito_cena, estado_cena = await self.gerar_narracao(
                         ctx, texto, ficha, especializacoes, sessao["id"]
                     )
             except Exception as erro:
@@ -1400,6 +1419,11 @@ REGRA DE TAMANHO DA RESPOSTA
             await registrar_turno_sessao(
                 sessao["id"], ctx.author.id, ficha["nome"], texto, narracao
             )
+            if conflito_cena is not None or estado_cena:
+                await atualizar_estado_cena_sessao(sessao["id"], conflito_cena, estado_cena)
+            if conflito_cena is not None and not mudanca_estado:
+                loc_now=await buscar_localizacao_jogador(ctx.author.id)
+                await definir_estado_jogador(ctx.author.id, (loc_now["estado"] if loc_now and loc_now["estado"] else "livre"), (loc_now["custodia"] if loc_now else None), (loc_now["restricoes"] if loc_now else None), conflito_cena)
 
             # O texto da IA não altera o mundo sozinho: somente marcadores internos
             # validados nesta resposta podem atualizar localização/estado.
@@ -1424,6 +1448,18 @@ REGRA DE TAMANHO DA RESPOSTA
                         f"🔒 Estado persistente de {ficha['nome']}: "
                         f"{mudanca_estado['estado']}."
                     )
+
+
+            # Resposta visível primeiro; memórias, reputação e consequências secundárias vêm depois.
+            partes = dividir_mensagem(narracao, limite=3800)
+            total_partes = len(partes)
+            for indice, parte in enumerate(partes, start=1):
+                titulo = "📖 NARRADOR — SEA'S PARADISE"
+                if indice > 1:
+                    titulo += f" — CONTINUAÇÃO {indice}/{total_partes}"
+                embed = discord.Embed(title=titulo, description=parte, color=discord.Color.blue())
+                embed.set_footer(text=f"Ação de {ficha['nome']} • Narração automática")
+                await ctx.send(embed=embed)
 
 
             # Recompensas de NPCs marcantes: uma vez por personagem/NPC no mundo.
@@ -1496,27 +1532,6 @@ REGRA DE TAMANHO DA RESPOSTA
                     )
                     return
 
-            # Nunca corte a narração: cada parte vira seu próprio embed.
-            # Usamos margem abaixo do limite de 4096 caracteres da descrição
-            # para preservar parágrafos e evitar truncamentos.
-            partes = dividir_mensagem(narracao, limite=3800)
-            total_partes = len(partes)
-
-            for indice, parte in enumerate(partes, start=1):
-                titulo = "📖 NARRADOR — SEA'S PARADISE"
-                if indice > 1:
-                    titulo += f" — CONTINUAÇÃO {indice}/{total_partes}"
-
-                embed = discord.Embed(
-                    title=titulo,
-                    description=parte,
-                    color=discord.Color.blue()
-                )
-                embed.set_footer(
-                    text=f"Ação de {ficha['nome']} • Narração automática"
-                )
-                await ctx.send(embed=embed)
-
             if morte_player:
                 await ctx.send(
                     f"💀 **{ficha['nome']} morreu.** A ficha foi resetada. "
@@ -1528,7 +1543,9 @@ REGRA DE TAMANHO DA RESPOSTA
                 else:
                     print(f"⚠️ Central antiga de {ctx.author.id} não foi encontrada ou não pôde ser apagada.")
 
-            if not encerrar_sessao_auto and not morte_player:
+            if conflito_cena:
+                encerrar_sessao_auto=False
+            if not encerrar_sessao_auto and not morte_player and not conflito_cena:
                 try: encerrar_sessao_auto=await self.deve_encerrar_sessao(sessao["id"],narracao,texto)
                 except Exception as ex: print(f"⚠️ Verificador de encerramento: {ex}")
 
@@ -1550,36 +1567,16 @@ REGRA DE TAMANHO DA RESPOSTA
     @commands.command(name="combate")
     async def combate_info(self,ctx):
         s=await buscar_sessao_ativa(ctx.channel.id)
-        c=await buscar_combate_ativo(s["id"]) if s else None
-        await ctx.send(await self.painel_rodada(c) if c else "🕊️ Não há combate coletivo ativo.")
+        if not s: return await ctx.send("📭 Não há sessão ativa.")
+        await ctx.send("⚔️ **Combate é dinâmico no Sea's Paradise.** Continue usando `!acao`; ataques, defesas, fugas, perseguições e reações de NPCs são resolvidos dentro da própria cena.")
 
     @commands.command(name="pronto")
     async def pronto_combate(self,ctx):
-        s=await buscar_sessao_ativa(ctx.channel.id)
-        c=await buscar_combate_ativo(s["id"]) if s else None
-        if not c: await ctx.send("🕊️ Não há combate ativo."); return
-        ps=await listar_combatentes(c["id"],True)
-        p=next((x for x in ps if x["user_id"]==ctx.author.id),None)
-        if not p: await ctx.send("❌ Você ainda não entrou no combate. Use `!acao`."); return
-        await registrar_acao_combate(c["id"],c["rodada"],ctx.author.id,p["personagem_nome"],None,True)
-        if not c["primeira_rodada"] and await self.rodada_completa(c):
-            async with ctx.typing(): await self.resolver_rodada_coletiva(ctx,s,c)
-        else: await ctx.send("⏭️ Você passou.\\n"+await self.painel_rodada(c))
+        await ctx.send("🎭 `!pronto` não é mais necessário. Declare o que seu personagem faz com `!acao`; o conflito é resolvido organicamente pela cena.")
 
     @commands.command(name="resolver")
-    @commands.has_permissions(administrator=True)
     async def resolver_combate(self,ctx):
-        s=await buscar_sessao_ativa(ctx.channel.id)
-        c=await buscar_combate_ativo(s["id"]) if s else None
-        if not c: await ctx.send("🕊️ Não há combate ativo."); return
-        acts=await listar_acoes_rodada(c["id"],c["rodada"])
-        if not acts: await ctx.send("❌ Ninguém declarou ação."); return
-        if not c["primeira_rodada"]:
-            feitos={a["user_id"] for a in acts}
-            for p in await listar_combatentes(c["id"],True):
-                if p["user_id"] not in feitos:
-                    await registrar_acao_combate(c["id"],c["rodada"],p["user_id"],p["personagem_nome"],None,True)
-        async with ctx.typing(): await self.resolver_rodada_coletiva(ctx,s,c)
+        await ctx.send("🎭 Não existe mais uma rodada separada para resolver. Use `!acao`; quando todos os jogadores do ciclo declararem, a cena é resolvida automaticamente.")
 
 
     @commands.command(name="iniciar", aliases=["iniciarnarracao", "iniciarnarração"])
@@ -1625,6 +1622,17 @@ REGRA DE TAMANHO DA RESPOSTA
         ok,local_canal,estado=await self.validar_localizacao_do_canal(ctx)
         erro = None if ok else f"🚫 Você está em **{estado['localizacao'] if estado else 'outro local'}**, mas este canal representa **{local_canal}**."
         if not ok: await ctx.send(erro); return
+        evento_thread=await buscar_evento_por_thread(ctx.channel.id)
+        if evento_thread:
+            antigo=await status_participacao_evento(evento_thread["id"],ctx.author.id)
+            if antigo and antigo["status"] in ("concluido","desistiu"):
+                await ctx.send("🚫 Você já encerrou sua participação nesta instância e não pode repeti-la."); return
+            outro=await evento_ativo_usuario(ctx.author.id)
+            if outro and outro["id"]!=evento_thread["id"]:
+                await ctx.send("🎯 Você já está em outro evento."); return
+            if evento_thread["exclusivo_marinha"] and "marinha" not in (ficha["faccao"] or "").casefold():
+                await ctx.send("⚓ Esta missão é exclusiva da Marinha."); return
+            await participar_evento_global(evento_thread["id"],ctx.author.id,ficha["nome"])
         ps=await listar_participantes_sessao(s["id"],True)
         if any(p["user_id"]==ctx.author.id for p in ps):
             qtd=s["jogadores_esperados"] or 1
@@ -1668,8 +1676,9 @@ REGRA DE TAMANHO DA RESPOSTA
         sessao=await buscar_sessao_ativa(ctx.channel.id)
         if not sessao:
             await ctx.send("📭 Não há sessão ativa neste canal."); return
-        if await buscar_combate_ativo(sessao["id"]):
-            await ctx.send("⚔️ Há combate ativo. Use `!resolver` para a rodada de combate."); return
+        legado=await buscar_combate_ativo(sessao["id"])
+        if legado:
+            await encerrar_combate_sessao(legado["id"])
         ciclo=sessao["ciclo_cena"] if "ciclo_cena" in sessao else 1
         participantes=await listar_participantes_ciclo(sessao["id"],ciclo)
         acoes=await listar_acoes_cena_sessao(sessao["id"],ciclo)
@@ -1703,6 +1712,16 @@ REGRA DE TAMANHO DA RESPOSTA
         sessao = await buscar_sessao_ativa(ctx.channel.id)
         if not sessao:
             await ctx.send("📭 Não há sessão ativa para encerrar neste canal.")
+            return
+        participantes=await listar_participantes_sessao(sessao["id"],True)
+        conflito=bool(sessao["conflito_ativo"]) if "conflito_ativo" in sessao else False
+        if not conflito:
+            for pp in participantes:
+                loc=await buscar_localizacao_jogador(pp["user_id"])
+                if loc and "combate_ativo" in loc and loc["combate_ativo"]:
+                    conflito=True; break
+        if conflito:
+            await ctx.send("⚔️ **A cena não pode ser encerrada enquanto existe conflito imediato pendente.** Resolva a situação com `!acao` (fugir, render-se, vencer, ser capturado, negociar etc.). O mundo não congela só porque a sessão foi fechada.")
             return
         async with ctx.typing():
             resumo_final = await self.resumo_encerramento_sessao(sessao["id"])
