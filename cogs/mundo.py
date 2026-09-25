@@ -6,6 +6,7 @@ from openai import AsyncOpenAI
 
 from data.navegacao import LOCAIS, normalizar_destino
 from data.mundo import BOSS_RANKS, BOSSES_ESPECIAIS, MISSOES_MARINHA, PESCAS, info_ilha
+from data.poderes import AKUMA_SKILLS
 from database.database import (
     buscar_ficha,buscar_localizacao_jogador,buscar_especializacoes,buscar_treinamento_ativo,buscar_viagem_ativa,buscar_sessao_ativa_usuario,
     criar_evento_global,listar_eventos_globais_abertos,buscar_evento_global,vincular_evento_thread,participar_evento_global,status_participacao_evento,
@@ -14,6 +15,7 @@ from database.database import (
     adicionar_berries,adicionar_pontos_atributo,adicionar_pontos_percentuais,adicionar_reputacao,adicionar_item_inventario,
     definir_dominacao_ilha,buscar_dominacao_ilha,criar_subordinado,listar_subordinados,criar_cacada,listar_cacadas,registrar_descoberta,listar_descobertas,
     registrar_transacao_economia,definir_hp_evento,candidatos_cacada,buscar_cooldown,definir_cooldown,incrementar_especializacao_direto,liberar_forma,listar_formas,forma_ativa,ativar_forma,desativar_forma,
+    obter_controle_akuma_spawn,agendar_proximo_akuma_spawn,criar_akuma_spawn,vincular_mensagem_akuma_spawn,listar_akuma_spawns_ativos,expirar_akuma_spawns,coletar_akuma_spawn,
 )
 
 CANAL_EVENTOS_ID=1552724689485430874
@@ -48,6 +50,24 @@ class EventoView(discord.ui.View):
         b=discord.ui.Button(label='Participar',emoji='⚔️',style=discord.ButtonStyle.success,custom_id=f'sp:evento:{evento_id}')
         b.callback=self.aceitar; self.add_item(b)
     async def aceitar(self,interaction): await self.cog.aceitar_evento(interaction,self.evento_id)
+
+class AkumaSpawnView(discord.ui.View):
+    def __init__(self,cog,spawn_id):
+        super().__init__(timeout=None); self.cog=cog; self.spawn_id=int(spawn_id)
+        b=discord.ui.Button(label='Pegar Akuma no Mi',emoji='🍈',style=discord.ButtonStyle.success,custom_id=f'sp:akuma_spawn:{spawn_id}')
+        b.callback=self.pegar; self.add_item(b)
+    async def pegar(self,interaction):
+        ficha=await buscar_ficha(interaction.user.id)
+        if not ficha:
+            return await interaction.response.send_message('❌ Você precisa possuir uma ficha para coletar a fruta.',ephemeral=True)
+        resultado=await coletar_akuma_spawn(self.spawn_id,interaction.user.id)
+        if resultado is False:
+            return await interaction.response.send_message('📍 Você precisa estar nesta ilha para pegar esta Akuma no Mi.',ephemeral=True)
+        if not resultado:
+            return await interaction.response.send_message('⌛ Essa Akuma no Mi já foi coletada ou desapareceu.',ephemeral=True)
+        for item in self.children: item.disabled=True
+        try: await interaction.response.edit_message(content=f"🍈 **{resultado['nome']} foi encontrada!**\n🏴‍☠️ {interaction.user.mention} chegou primeiro e pegou a fruta. Ela foi enviada ao inventário e apodrece em **5 dias** se não for utilizada/doada.",view=self)
+        except discord.HTTPException: pass
 
 class Mundo(commands.Cog):
     def __init__(self,bot):
@@ -141,7 +161,7 @@ class Mundo(commands.Cog):
         if not e:return await ctx.send('ℹ️ Você não está em evento global.')
         p=await desistir_evento(e['id'],ctx.author.id)
         if p and e['sessao_id']: await marcar_participante_sessao(e['sessao_id'],ctx.author.id,'saiu')
-        await ctx.send('🏳️ Você desistiu deste evento. **Esta instância não poderá ser repetida por você.**')
+        await ctx.send('🏳️ Você desistiu deste evento. **Esta instância não poderá ser repetida por você.**',delete_after=15)
 
     @commands.command()
     async def eventostatus(self,ctx):
@@ -362,12 +382,65 @@ class Mundo(commands.Cog):
             try: await ch.send(f"🏆 **EVENTO CONCLUÍDO — RECOMPENSAS ENTREGUES**\n💰 {dinheiro(rec.get('berries',0))}\n📈 +{rec.get('pontos',0)} pontos • +{rec.get('percentual',0)}% • +{rec.get('reputacao',0)} reputação\nAs recompensas foram aplicadas automaticamente a todos que concluíram.")
             except:pass
 
+    def _local_ilha_do_canal(self,ch):
+        if not isinstance(ch,discord.TextChannel): return None
+        bruto=ch.name.replace('-', ' ').replace('_',' ').strip()
+        aliases={'ilhas conomi':'Conomi Islands','sabaody':'Sabaody Archipelago','ilha dos homens peixe':'Fish-Man Island','fish man island':'Fish-Man Island'}
+        local=aliases.get(bruto.casefold()) or normalizar_destino(bruto)
+        return local if local in LOCAIS else None
+
+    async def processar_akuma_spawns(self):
+        agora=datetime.now(timezone.utc)
+        # Expiradas desaparecem do chat: drop dura exatamente 30 minutos.
+        for sp in await expirar_akuma_spawns():
+            ch=self.bot.get_channel(sp['channel_id'])
+            if ch and sp['mensagem_id']:
+                try:
+                    msg=await ch.fetch_message(sp['mensagem_id']); await msg.delete()
+                except (discord.NotFound,discord.Forbidden,discord.HTTPException): pass
+        ativos=await listar_akuma_spawns_ativos()
+        if ativos: return
+        ctrl=await obter_controle_akuma_spawn()
+        if not ctrl:
+            return await agendar_proximo_akuma_spawn(agora+timedelta(minutes=random.randint(60,180)))
+        if ctrl['proximo_spawn_em']>agora: return
+        candidatos=[]
+        for guild in self.bot.guilds:
+            for ch in guild.text_channels:
+                local=self._local_ilha_do_canal(ch)
+                if local:
+                    perms=ch.permissions_for(guild.me)
+                    if perms.send_messages and perms.view_channel: candidatos.append((guild,ch,local))
+        if not candidatos:
+            return await agendar_proximo_akuma_spawn(agora+timedelta(minutes=30))
+        guild,ch,local=random.choice(candidatos)
+        nome=random.choice(list(AKUMA_SKILLS.keys())); tipo=AKUMA_SKILLS[nome][0]
+        expira=agora+timedelta(minutes=30)
+        sp=await criar_akuma_spawn(guild.id,ch.id,local,nome,tipo,expira)
+        emb=discord.Embed(title='🍈 UMA AKUMA NO MI APARECEU!',description=f'Entre os arredores de **{local}**, uma fruta estranha foi encontrada.\n\n**{nome}** • {tipo.title()}\n⏳ Ela desaparecerá em **30 minutos** se ninguém a pegar.\n📍 Apenas personagens que realmente estejam nesta ilha podem coletá-la.',color=discord.Color.purple())
+        msg=await ch.send(embed=emb,view=AkumaSpawnView(self,sp['id']))
+        await vincular_mensagem_akuma_spawn(sp['id'],msg.id)
+        # Próximo drop só é elegível horas depois; horário fica persistido.
+        await agendar_proximo_akuma_spawn(expira+timedelta(minutes=random.randint(90,330)))
+
     async def gerar_diario(self):
         ch=self.bot.get_channel(CANAL_EVENTOS_ID)
         if not ch:return
         abertos=await listar_eventos_globais_abertos()
         recentes=[e for e in abertos if e['criado_em']>datetime.now(timezone.utc)-timedelta(hours=20)]
         if recentes:return
+        # Limpa o mural anterior antes da nova rotação. Tópicos/eventos em andamento não são apagados.
+        try:
+            async for antiga in ch.history(limit=150):
+                if antiga.author.id != self.bot.user.id:
+                    continue
+                eh_mural=(antiga.content or '').startswith('📌 **O mural foi atualizado')
+                eh_card=any((emb.title or '').startswith(('⚓ MISSÃO DA MARINHA','👹 BOSS ESPECIAL')) for emb in antiga.embeds)
+                if eh_mural or eh_card:
+                    try: await antiga.delete()
+                    except discord.HTTPException: pass
+        except Exception as ex:
+            print(f"⚠️ limpeza mural diário: {type(ex).__name__}: {ex}")
         # mural visual sempre acompanha o ciclo diário
         from PIL import Image,ImageDraw,ImageFont
         im=Image.new('RGB',(1200,700),(87,55,30)); d=ImageDraw.Draw(im)
@@ -388,6 +461,7 @@ class Mundo(commands.Cog):
     async def relogio_mundo(self):
         try:
             await self.gerar_diario()
+            await self.processar_akuma_spawns()
             for e in await eventos_para_finalizar(): await self.aplicar_recompensa(e)
             # Caçadores persistentes: reputação alta passa a gerar perseguição sem intervenção de staff.
             for alvo in await candidatos_cacada():
@@ -399,5 +473,8 @@ class Mundo(commands.Cog):
     @relogio_mundo.before_loop
     async def antes(self):
         await self.bot.wait_until_ready(); await self.restaurar_views()
+        for sp in await listar_akuma_spawns_ativos():
+            try: self.bot.add_view(AkumaSpawnView(self,sp['id']))
+            except Exception: pass
 
 async def setup(bot): await bot.add_cog(Mundo(bot))

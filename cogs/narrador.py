@@ -3,7 +3,7 @@ import asyncio
 import json
 import re
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from openai import AsyncOpenAI
 
 from database.database import buscar_viagem_ativa, buscar_treinamento_ativo, listar_subordinados, evento_ativo_usuario, forma_ativa
@@ -43,9 +43,9 @@ from database.database import (
     registrar_turno_sessao,
     buscar_turnos_sessao,
     encerrar_sessao_narracao,
-    buscar_reputacao_mundo, aplicar_impacto_reputacao, registrar_noticia_mundo, buscar_noticias_mundo,
+    buscar_reputacao_mundo, aplicar_impacto_reputacao, registrar_noticia_mundo, buscar_noticias_mundo, sincronizar_noticias_recentes,
     configurar_sessao_narracao, marcar_sessao_iniciada,
-    registrar_acao_cena_sessao, listar_acoes_cena_sessao, avancar_ciclo_cena_sessao,
+    registrar_acao_cena_sessao, listar_acoes_cena_sessao, avancar_ciclo_cena_sessao, definir_deadline_ciclo, limpar_deadline_ciclo, listar_ciclos_expirados,
     buscar_combate_ativo, iniciar_combate_sessao, entrar_combate, listar_combatentes,
     registrar_acao_combate, listar_acoes_rodada, atualizar_status_combatente,
     avancar_rodada_combate, encerrar_combate_sessao, atualizar_estado_cena_sessao,
@@ -282,6 +282,53 @@ class Narrador(commands.Cog):
         if not OPENAI_API_KEY:
             raise RuntimeError("OPENAI_API_KEY não foi configurada no ambiente.")
         self.client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+        self.verificar_ciclos_pendentes.start()
+
+    def cog_unload(self):
+        self.verificar_ciclos_pendentes.cancel()
+
+    async def cog_before_invoke(self, ctx):
+        # No canal de RP, comandos operacionais somem sozinhos; !acao é parte do registro narrativo.
+        if ctx.command and ctx.command.name != "acao":
+            async def apagar_comando():
+                await asyncio.sleep(15)
+                try: await ctx.message.delete()
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException): pass
+            asyncio.create_task(apagar_comando())
+
+    async def aviso(self, ctx, conteudo=None, *, embed=None, segundos=12):
+        return await ctx.send(conteudo, embed=embed, delete_after=segundos)
+
+    @tasks.loop(seconds=10)
+    async def verificar_ciclos_pendentes(self):
+        for sessao in await listar_ciclos_expirados():
+            cena_id=int(sessao['channel_id'])
+            locks.setdefault(cena_id, asyncio.Lock())
+            if locks[cena_id].locked():
+                continue
+            async with locks[cena_id]:
+                atual=await buscar_sessao_por_id(sessao['id'])
+                if not atual or atual['status']!='ativa' or not atual['ciclo_deadline']:
+                    continue
+                ciclo=atual['ciclo_cena']
+                acoes=await listar_acoes_cena_sessao(atual['id'],ciclo)
+                if not acoes:
+                    await limpar_deadline_ciclo(atual['id']); continue
+                canal=self.bot.get_channel(cena_id)
+                if not canal:
+                    continue
+                class CtxTimeout:
+                    def __init__(self,ch): self.channel=ch; self.guild=getattr(ch,'guild',None); self.bot=None
+                    async def send(self,*a,**kw): return await self.channel.send(*a,**kw)
+                    def typing(self): return self.channel.typing()
+                try:
+                    await self.resolver_cena_multiplayer(CtxTimeout(canal),atual,acoes,timeout=True)
+                except Exception as ex:
+                    print(f"❌ ERRO TIMEOUT CENA {atual['id']} — {type(ex).__name__}: {ex}")
+
+    @verificar_ciclos_pendentes.before_loop
+    async def antes_timeout_ciclos(self):
+        await self.bot.wait_until_ready()
 
     def localizacao_do_canal(self, ctx):
         nome = getattr(ctx.channel, "name", None)
@@ -400,7 +447,7 @@ Responda somente SIM ou NAO."""
             input=entrada,max_output_tokens=8)
         return r.output_text.strip().upper().startswith("SIM")
 
-    async def resolver_cena_multiplayer(self,ctx,sessao,acoes):
+    async def resolver_cena_multiplayer(self,ctx,sessao,acoes,timeout=False):
         blocos=[]; fichas={}
         for a in acoes:
             f=await buscar_ficha(a["user_id"])
@@ -420,6 +467,7 @@ FICHAS:
 {chr(10).join(blocos)}
 DECLARAÇÕES DESTE CICLO:
 {declaracoes}
+{contexto_ausentes}
 NPCS:
 {canon}
 MUNDO:
@@ -430,7 +478,7 @@ ESTADO TÁTICO PERSISTENTE DA CENA:
 {sessao['estado_cena'] if 'estado_cena' in sessao and sessao['estado_cena'] else 'Ainda não consolidado.'}
 
 Resolva TODAS as declarações em UMA continuação compartilhada. Não faça uma narração isolada por player.
-REGRA DE COBERTURA: cada declaração deste ciclo DEVE produzir uma consequência perceptível nesta mesma resposta. Não adie uma ação para o próximo ciclo e não omita nenhum jogador.
+REGRA DE COBERTURA: cada declaração RECEBIDA deste ciclo DEVE produzir uma consequência perceptível nesta mesma resposta. Não adie uma ação para o próximo ciclo e não omita nenhum jogador.
 Não invente ação voluntária posterior dos players.
 NPCs/ambiente possuem iniciativa. Se houver hostilidade imediata, eles DEVEM tomar uma decisão concreta coerente nesta resposta (atacar, defender, fugir, avançar, buscar cobertura, negociar, proteger alguém, chamar reforço etc.); ficar apenas mirando/cercando/reposicionando repetidamente não conta como reação.
 Combate é um ESTADO da própria cena, não um modo separado. Continue resolvendo tudo por !acao.
@@ -1380,14 +1428,15 @@ REGRA DE TAMANHO DA RESPOSTA
             if len(participantes_ciclo)>1:
                 declaradas_antes=await listar_acoes_cena_sessao(sessao["id"],ciclo)
                 if ctx.author.id in {a["user_id"] for a in declaradas_antes}:
-                    await ctx.send(f"⏳ **{ficha['nome']} já declarou a ação deste ciclo.** Aguarde os demais participantes.")
+                    await self.aviso(ctx,f"⏳ **{ficha['nome']} já declarou a ação deste ciclo.** Aguarde os demais participantes.")
                     return
                 await registrar_acao_cena_sessao(sessao["id"],ciclo,ctx.author.id,ficha["nome"],texto)
                 declaradas=await listar_acoes_cena_sessao(sessao["id"],ciclo)
                 feitos={a["user_id"] for a in declaradas}
                 faltam=[p["personagem_nome"] for p in participantes_ciclo if p["user_id"] not in feitos]
                 if faltam:
-                    await ctx.send(f"🎭 **Ação de {ficha['nome']} registrada — {len(feitos)}/{len(participantes_ciclo)}.**\n⏳ Aguardando: **{', '.join(faltam)}**.")
+                    await definir_deadline_ciclo(sessao["id"],300)
+                    await self.aviso(ctx,f"🎭 **Ação de {ficha['nome']} registrada — {len(feitos)}/{len(participantes_ciclo)}.**\n⏳ Aguardando: **{', '.join(faltam)}**. Se ninguém responder, a cena continua automaticamente após **5 min sem uma nova ação**. Use `!passar` para não agir neste ciclo.",segundos=15)
                     return
                 try:
                     async with ctx.typing():
@@ -1572,11 +1621,11 @@ REGRA DE TAMANHO DA RESPOSTA
 
     @commands.command(name="pronto")
     async def pronto_combate(self,ctx):
-        await ctx.send("🎭 `!pronto` não é mais necessário. Declare o que seu personagem faz com `!acao`; o conflito é resolvido organicamente pela cena.")
+        await self.aviso(ctx,"🎭 `!pronto` não é mais necessário. Declare o que seu personagem faz com `!acao`; o conflito é resolvido organicamente pela cena.")
 
     @commands.command(name="resolver")
     async def resolver_combate(self,ctx):
-        await ctx.send("🎭 Não existe mais uma rodada separada para resolver. Use `!acao`; quando todos os jogadores do ciclo declararem, a cena é resolvida automaticamente.")
+        await self.aviso(ctx,"🎭 Não existe mais uma rodada separada para resolver. Use `!acao`; a cena resolve quando todos agirem ou o tempo do ciclo acabar.")
 
 
     @commands.command(name="iniciar", aliases=["iniciarnarracao", "iniciarnarração"])
@@ -1671,6 +1720,29 @@ REGRA DE TAMANHO DA RESPOSTA
             + ("\n".join(nomes) if nomes else "Nenhum participante ativo.")
         )
 
+    @commands.command(name="passar", aliases=["passo"])
+    async def passar_ciclo(self,ctx):
+        sessao=await buscar_sessao_ativa(ctx.channel.id)
+        if not sessao or not sessao["iniciada"]:
+            return await self.aviso(ctx,"📭 Não há ciclo narrativo ativo para passar.")
+        participantes=await listar_participantes_ciclo(sessao["id"],sessao["ciclo_cena"])
+        if ctx.author.id not in {p["user_id"] for p in participantes}:
+            return await self.aviso(ctx,"🎭 Você não participa deste ciclo.")
+        acoes=await listar_acoes_cena_sessao(sessao["id"],sessao["ciclo_cena"])
+        if ctx.author.id in {a["user_id"] for a in acoes}:
+            return await self.aviso(ctx,"⏳ Você já declarou neste ciclo.")
+        ficha=await buscar_ficha(ctx.author.id)
+        await registrar_acao_cena_sessao(sessao["id"],sessao["ciclo_cena"],ctx.author.id,ficha["nome"],"[PASSOU O CICLO — nenhuma nova ação voluntária]")
+        acoes=await listar_acoes_cena_sessao(sessao["id"],sessao["ciclo_cena"])
+        feitos={a["user_id"] for a in acoes}
+        faltam=[p["personagem_nome"] for p in participantes if p["user_id"] not in feitos]
+        if faltam:
+            await definir_deadline_ciclo(sessao["id"],300)
+            return await self.aviso(ctx,f"⏭️ **{ficha['nome']} passou.** Aguardando: **{', '.join(faltam)}**.")
+        await limpar_deadline_ciclo(sessao["id"])
+        async with ctx.typing():
+            await self.resolver_cena_multiplayer(ctx,sessao,acoes)
+
     @commands.command(name="resolvercena")
     async def resolver_cena_pendente(self,ctx):
         sessao=await buscar_sessao_ativa(ctx.channel.id)
@@ -1684,8 +1756,8 @@ REGRA DE TAMANHO DA RESPOSTA
         acoes=await listar_acoes_cena_sessao(sessao["id"],ciclo)
         feitos={a["user_id"] for a in acoes}
         faltam=[p["personagem_nome"] for p in participantes if p["user_id"] not in feitos]
-        if faltam:
-            await ctx.send(f"⏳ Ainda faltam ações de: **{', '.join(faltam)}**."); return
+        if faltam and acoes:
+            await self.aviso(ctx,f"⏩ Resolvendo com quem já agiu. Sem declaração neste ciclo: **{', '.join(faltam)}**.")
         if not acoes:
             await ctx.send("📭 Não há ações pendentes neste ciclo."); return
         try:
@@ -1721,7 +1793,7 @@ REGRA DE TAMANHO DA RESPOSTA
                 if loc and "combate_ativo" in loc and loc["combate_ativo"]:
                     conflito=True; break
         if conflito:
-            await ctx.send("⚔️ **A cena não pode ser encerrada enquanto existe conflito imediato pendente.** Resolva a situação com `!acao` (fugir, render-se, vencer, ser capturado, negociar etc.). O mundo não congela só porque a sessão foi fechada.")
+            await self.aviso(ctx,"⚔️ **A cena não pode ser encerrada enquanto existe conflito imediato pendente.** Resolva a situação com `!acao` (fugir, render-se, vencer, ser capturado, negociar etc.). O mundo não congela só porque a sessão foi fechada.",segundos=18)
             return
         async with ctx.typing():
             resumo_final = await self.resumo_encerramento_sessao(sessao["id"])
@@ -1904,7 +1976,9 @@ REGRA DE TAMANHO DA RESPOSTA
 
     @commands.command(name="jornal", aliases=["noticias", "notícias"])
     async def jornal(self, ctx):
-        noticias = await buscar_noticias_mundo(8)
+        # Antes de montar a edição, materializa fatos públicos recentes que ainda não ganharam matéria.
+        await sincronizar_noticias_recentes(30)
+        noticias = await buscar_noticias_mundo(10)
         if not noticias:
             await ctx.send("📰 Ainda não há notícias relevantes circulando pelo mundo.")
             return
