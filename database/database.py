@@ -499,6 +499,8 @@ async def criar_tabelas():
         """)
         await conn.execute("ALTER TABLE sessoes_narracao ADD COLUMN IF NOT EXISTS jogadores_esperados INTEGER;")
         await conn.execute("ALTER TABLE sessoes_narracao ADD COLUMN IF NOT EXISTS iniciada BOOLEAN NOT NULL DEFAULT FALSE;")
+        await conn.execute("ALTER TABLE sessoes_narracao ADD COLUMN IF NOT EXISTS conflito_ativo BOOLEAN NOT NULL DEFAULT FALSE;")
+        await conn.execute("ALTER TABLE sessoes_narracao ADD COLUMN IF NOT EXISTS estado_cena TEXT;")
         await conn.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS uq_sessao_ativa_canal
             ON sessoes_narracao(channel_id)
@@ -2255,6 +2257,18 @@ async def encerrar_sessao_narracao(sessao_id, resumo_final=None):
 # =========================================================
 # COMBATE COLETIVO — RODADAS
 # =========================================================
+
+async def atualizar_estado_cena_sessao(sessao_id, conflito_ativo=None, estado_cena=None):
+    db=get_pool()
+    return await db.fetchrow("""UPDATE sessoes_narracao SET
+        conflito_ativo=COALESCE($2,conflito_ativo),
+        estado_cena=COALESCE($3,estado_cena),
+        atualizada_em=CURRENT_TIMESTAMP WHERE id=$1 RETURNING *;""",
+        int(sessao_id), conflito_ativo, estado_cena)
+
+async def buscar_evento_por_thread(thread_id):
+    return await get_pool().fetchrow("SELECT * FROM eventos_globais WHERE thread_id=$1 AND status IN ('aberto','andamento') ORDER BY id DESC LIMIT 1;",int(thread_id))
+
 async def buscar_combate_ativo(sessao_id):
     db=get_pool()
     return await db.fetchrow("SELECT * FROM combates_sessao WHERE sessao_id=$1 AND status='ativo' ORDER BY id DESC LIMIT 1;",int(sessao_id))
