@@ -501,6 +501,7 @@ async def criar_tabelas():
         await conn.execute("ALTER TABLE sessoes_narracao ADD COLUMN IF NOT EXISTS iniciada BOOLEAN NOT NULL DEFAULT FALSE;")
         await conn.execute("ALTER TABLE sessoes_narracao ADD COLUMN IF NOT EXISTS conflito_ativo BOOLEAN NOT NULL DEFAULT FALSE;")
         await conn.execute("ALTER TABLE sessoes_narracao ADD COLUMN IF NOT EXISTS estado_cena TEXT;")
+        await conn.execute("ALTER TABLE sessoes_narracao ADD COLUMN IF NOT EXISTS ciclo_deadline TIMESTAMPTZ;")
         await conn.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS uq_sessao_ativa_canal
             ON sessoes_narracao(channel_id)
@@ -741,6 +742,10 @@ async def criar_tabelas():
         await conn.execute("""CREATE TABLE IF NOT EXISTS organizacoes (id BIGSERIAL PRIMARY KEY, nome TEXT UNIQUE NOT NULL, tipo TEXT NOT NULL, lider_user_id BIGINT, criado_em TIMESTAMPTZ DEFAULT NOW());""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS membros_organizacao (organizacao_id BIGINT REFERENCES organizacoes(id) ON DELETE CASCADE, user_id BIGINT UNIQUE NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, cargo TEXT NOT NULL DEFAULT 'Membro', entrou_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(organizacao_id,user_id));""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS akumas_encontradas (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, item_id TEXT NOT NULL, nome TEXT NOT NULL, tipo TEXT NOT NULL, encontrada_em TIMESTAMPTZ DEFAULT NOW(), expira_em TIMESTAMPTZ NOT NULL, consumida BOOLEAN DEFAULT FALSE);""")
+        # Drops espontâneos de Akuma no Mi em canais de ilhas. Persistem entre redeploys.
+        await conn.execute("""CREATE TABLE IF NOT EXISTS akuma_spawns_mundo (id BIGSERIAL PRIMARY KEY, guild_id BIGINT NOT NULL, channel_id BIGINT NOT NULL, localizacao TEXT NOT NULL, nome TEXT NOT NULL, tipo TEXT NOT NULL, mensagem_id BIGINT, status TEXT NOT NULL DEFAULT 'ativo', criado_em TIMESTAMPTZ DEFAULT NOW(), expira_em TIMESTAMPTZ NOT NULL, coletado_por BIGINT, coletado_em TIMESTAMPTZ);""")
+        await conn.execute("""CREATE INDEX IF NOT EXISTS idx_akuma_spawns_status_expira ON akuma_spawns_mundo(status,expira_em);""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS akuma_spawn_controle (id SMALLINT PRIMARY KEY DEFAULT 1 CHECK(id=1), proximo_spawn_em TIMESTAMPTZ NOT NULL);""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS execucoes_diarias (chave TEXT PRIMARY KEY, executado_em TIMESTAMPTZ DEFAULT NOW());""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS sorteios_diarios (id BIGSERIAL PRIMARY KEY, premio TEXT NOT NULL, valor INTEGER NOT NULL DEFAULT 0, mensagem_id BIGINT, encerra_em TIMESTAMPTZ NOT NULL, status TEXT DEFAULT 'aberto', vencedor_user_id BIGINT);""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS participantes_sorteio (sorteio_id BIGINT REFERENCES sorteios_diarios(id) ON DELETE CASCADE, user_id BIGINT NOT NULL, PRIMARY KEY(sorteio_id,user_id));""")
@@ -2434,6 +2439,16 @@ async def marcar_sessao_iniciada(sessao_id):
     db=get_pool()
     return await db.fetchrow("UPDATE sessoes_narracao SET iniciada=TRUE,atualizada_em=CURRENT_TIMESTAMP WHERE id=$1 RETURNING *;",int(sessao_id))
 
+async def definir_deadline_ciclo(sessao_id, segundos=90):
+    db=get_pool()
+    return await db.fetchrow("""UPDATE sessoes_narracao SET ciclo_deadline=NOW()+($2 * INTERVAL '1 second'), atualizada_em=NOW() WHERE id=$1 AND status='ativa' RETURNING *;""", int(sessao_id), int(segundos))
+
+async def limpar_deadline_ciclo(sessao_id):
+    return await get_pool().execute("UPDATE sessoes_narracao SET ciclo_deadline=NULL WHERE id=$1;", int(sessao_id))
+
+async def listar_ciclos_expirados():
+    return await get_pool().fetch("""SELECT * FROM sessoes_narracao WHERE status='ativa' AND iniciada=TRUE AND ciclo_deadline IS NOT NULL AND ciclo_deadline<=NOW() ORDER BY ciclo_deadline LIMIT 30;""")
+
 async def registrar_acao_cena_sessao(sessao_id,ciclo,user_id,personagem_nome,acao):
     db=get_pool()
     return await db.fetchrow("""INSERT INTO acoes_cena_sessao(sessao_id,ciclo,user_id,personagem_nome,acao)
@@ -2448,7 +2463,7 @@ async def listar_acoes_cena_sessao(sessao_id,ciclo):
 
 async def avancar_ciclo_cena_sessao(sessao_id):
     db=get_pool()
-    return await db.fetchrow("UPDATE sessoes_narracao SET ciclo_cena=ciclo_cena+1,atualizada_em=CURRENT_TIMESTAMP WHERE id=$1 RETURNING *;",
+    return await db.fetchrow("UPDATE sessoes_narracao SET ciclo_cena=ciclo_cena+1,ciclo_deadline=NULL,atualizada_em=CURRENT_TIMESTAMP WHERE id=$1 RETURNING *;",
                              int(sessao_id))
 
 async def definir_inicio_ciclo_participante(sessao_id,user_id,ciclo):
@@ -2886,3 +2901,51 @@ async def transferir_capitania(tid,capitao_atual,novo):
             await c.execute("UPDATE membros_tripulacao SET cargo='Tripulante' WHERE tripulacao_id=$1 AND user_id=$2",int(tid),int(capitao_atual))
             await c.execute("UPDATE membros_tripulacao SET cargo='Capitão' WHERE tripulacao_id=$1 AND user_id=$2",int(tid),int(novo))
             await c.execute("UPDATE tripulacoes SET capitao_user_id=$2 WHERE id=$1",int(tid),int(novo)); return True
+
+
+# =========================================================
+# AKUMA NO MI — DROPS ESPONTÂNEOS EM ILHAS
+# =========================================================
+async def obter_controle_akuma_spawn():
+    return await get_pool().fetchrow("SELECT * FROM akuma_spawn_controle WHERE id=1")
+
+async def agendar_proximo_akuma_spawn(quando):
+    return await get_pool().fetchrow("""INSERT INTO akuma_spawn_controle(id,proximo_spawn_em) VALUES(1,$1) ON CONFLICT(id) DO UPDATE SET proximo_spawn_em=EXCLUDED.proximo_spawn_em RETURNING *""",quando)
+
+async def criar_akuma_spawn(guild_id,channel_id,localizacao,nome,tipo,expira_em):
+    return await get_pool().fetchrow("""INSERT INTO akuma_spawns_mundo(guild_id,channel_id,localizacao,nome,tipo,expira_em) VALUES($1,$2,$3,$4,$5,$6) RETURNING *""",guild_id,channel_id,localizacao,nome,tipo,expira_em)
+
+async def vincular_mensagem_akuma_spawn(spawn_id,mensagem_id):
+    return await get_pool().execute("UPDATE akuma_spawns_mundo SET mensagem_id=$2 WHERE id=$1",spawn_id,mensagem_id)
+
+async def listar_akuma_spawns_ativos():
+    return await get_pool().fetch("SELECT * FROM akuma_spawns_mundo WHERE status='ativo' ORDER BY criado_em")
+
+async def expirar_akuma_spawns():
+    return await get_pool().fetch("""UPDATE akuma_spawns_mundo SET status='expirado' WHERE status='ativo' AND expira_em<=NOW() RETURNING *""")
+
+async def coletar_akuma_spawn(spawn_id,user_id):
+    db=get_pool()
+    async with db.acquire() as conn:
+        async with conn.transaction():
+            r=await conn.fetchrow("SELECT * FROM akuma_spawns_mundo WHERE id=$1 FOR UPDATE",int(spawn_id))
+            if not r or r['status']!='ativo' or r['expira_em']<=__import__('datetime').datetime.now(__import__('datetime').timezone.utc): return None
+            loc=await conn.fetchrow("SELECT localizacao FROM localizacoes_jogador WHERE user_id=$1",int(user_id))
+            if not loc: return False
+            from data.navegacao import normalizar_destino
+            if normalizar_destino(loc['localizacao']) != normalizar_destino(r['localizacao']): return False
+            item='akuma_'+str(abs(hash(r['nome']))%10**8)
+            await adicionar_item_inventario(user_id,item,1,conn)
+            await conn.execute("INSERT INTO akumas_encontradas(user_id,item_id,nome,tipo,expira_em) VALUES($1,$2,$3,$4,NOW()+INTERVAL '5 days')",int(user_id),item,r['nome'],r['tipo'])
+            return await conn.fetchrow("UPDATE akuma_spawns_mundo SET status='coletado',coletado_por=$2,coletado_em=NOW() WHERE id=$1 RETURNING *",int(spawn_id),int(user_id))
+
+async def sincronizar_noticias_recentes(limite=20):
+    """Transforma fatos públicos relevantes ainda sem matéria em notícias. Não duplica evento."""
+    db=get_pool()
+    rows=await db.fetch("""SELECT e.* FROM eventos_mundo e LEFT JOIN noticias_mundo n ON n.evento_id=e.id WHERE n.id IS NULL AND e.criado_em>=NOW()-INTERVAL '7 days' AND (e.publico_sabe=TRUE OR e.alcance IN ('regional','mundial')) AND e.gravidade>=2 ORDER BY e.criado_em ASC LIMIT $1""",max(1,min(50,int(limite))))
+    for e in rows:
+        local=e['localizacao'] or 'mares'
+        tipo=(e['tipo'] or 'acontecimento').replace('_',' ').strip().title()
+        manchete=f"{tipo} movimenta {local}"[:180]
+        await db.execute("""INSERT INTO noticias_mundo(evento_id,personagem_nome,manchete,corpo,alcance) SELECT $1,$2,$3,$4,$5 WHERE NOT EXISTS(SELECT 1 FROM noticias_mundo WHERE evento_id=$1)""",e['id'],e['personagem_nome'],manchete,e['resumo'][:1500],e['alcance'])
+    return len(rows)
