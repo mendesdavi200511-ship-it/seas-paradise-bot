@@ -291,12 +291,17 @@ class Narrador(commands.Cog):
         # No canal de RP, comandos operacionais somem sozinhos; !acao é parte do registro narrativo.
         if ctx.command and ctx.command.name != "acao":
             async def apagar_comando():
-                await asyncio.sleep(15)
+                await asyncio.sleep(120)
                 try: await ctx.message.delete()
                 except (discord.NotFound, discord.Forbidden, discord.HTTPException): pass
             asyncio.create_task(apagar_comando())
 
-    async def aviso(self, ctx, conteudo=None, *, embed=None, segundos=12):
+    async def aviso(self, ctx, conteudo=None, *, embed=None, segundos=120):
+        # Avisos operacionais são temporários e, quando destinados a um jogador,
+        # sempre o mencionam para gerar notificação no Discord.
+        autor = getattr(ctx, "author", None)
+        if conteudo and autor is not None and getattr(autor, "mention", None) and autor.mention not in conteudo:
+            conteudo = f"{autor.mention} {conteudo}"
         return await ctx.send(conteudo, embed=embed, delete_after=segundos)
 
     @tasks.loop(seconds=10)
@@ -456,6 +461,13 @@ Responda somente SIM ou NAO."""
                 esp=list(await buscar_especializacoes(a["user_id"]))
                 blocos.append(f"USER_ID={a['user_id']}\\n{formatar_ficha(f,esp)}")
         declaracoes="\\n".join(f"- {a['personagem_nome']} (USER_ID={a['user_id']}): {a['acao']}" for a in acoes)
+        participantes_ciclo_resolucao = await listar_participantes_ciclo(sessao["id"], sessao["ciclo_cena"])
+        ids_com_acao = {int(a["user_id"]) for a in acoes}
+        ausentes = [p for p in participantes_ciclo_resolucao if int(p["user_id"]) not in ids_com_acao]
+        contexto_ausentes = (
+            "PARTICIPANTES SEM DECLARAÇÃO NESTE CICLO (NÃO invente ação voluntária para eles):\n" +
+            "\n".join(f"- {p['personagem_nome']} (USER_ID={p['user_id']}): preserve a última situação conhecida; apenas consequências inevitáveis do mundo podem afetá-lo." for p in ausentes)
+        ) if ausentes else "TODOS OS PARTICIPANTES DO CICLO DECLARARAM AÇÃO."
         hist=await self.historico_compartilhado_sessao(sessao["id"])
         # Todos já passaram pelo portão de localização. Usamos um participante real
         # como âncora do contexto compartilhado em vez de user_id=None.
@@ -521,7 +533,7 @@ Seja objetivo: 2 a 6 parágrafos curtos."""
             if f:
                 try:
                     await self.salvar_memorias_da_acao(a["acao"],texto,f,a["user_id"])
-                    await self.registrar_consequencia_mundial(ctx,a["acao"],texto,f)
+                    await self.registrar_consequencia_mundial(ctx,a["acao"],texto,f,user_id=a["user_id"])
                 except Exception as ex: print(f"⚠️ Consequência multiplayer: {ex}")
         for uid,loc,area in locais: await definir_localizacao_jogador(int(uid),loc.strip(),(area or "").strip() or None)
         for uid,est,cus,res,comb in estados:
@@ -610,7 +622,7 @@ Use [ENCERRAR_SESSAO] somente se toda a narração também terminou."""
             if f:
                 try:
                     await self.salvar_memorias_da_acao(a["acao"],texto,f,a["user_id"])
-                    await self.registrar_consequencia_mundial(ctx,a["acao"],texto,f)
+                    await self.registrar_consequencia_mundial(ctx,a["acao"],texto,f,user_id=a["user_id"])
                 except Exception as ex: print(f"⚠️ Consequência coletiva: {ex}")
         for uid,est,cus,res,comb in estados:
             await definir_estado_jogador(int(uid),est.strip() or "livre",cus.strip() or None,res.strip() or None,comb.strip().casefold() in {"sim","true","1","yes"})
@@ -1087,9 +1099,10 @@ REGRAS:
 
         return "\n\n".join(encontrados[:8]) if encontrados else "Nenhum perfil canônico específico ativado."
 
-    async def registrar_consequencia_mundial(self, ctx, acao, narracao, ficha):
+    async def registrar_consequencia_mundial(self, ctx, acao, narracao, ficha, user_id=None):
         """Extrai apenas acontecimentos realmente consumados e dignos de persistência global."""
-        local = await buscar_localizacao_jogador(ctx.author.id)
+        uid = int(user_id if user_id is not None else ctx.author.id)
+        local = await buscar_localizacao_jogador(uid)
         localizacao = local["localizacao"] if local else None
         area = local["area"] if local else None
         entrada = f"""
@@ -1143,7 +1156,7 @@ Responda SOMENTE JSON válido, sem markdown, neste formato:
         if not resumo:
             return None
         evento = await registrar_evento_mundo(
-            personagem_nome=ficha["nome"], user_id=ctx.author.id,
+            personagem_nome=ficha["nome"], user_id=uid,
             localizacao=localizacao, area=area,
             tipo=str(dados.get("tipo") or "acontecimento")[:80], resumo=resumo[:1200],
             gravidade=dados.get("gravidade", 1), alcance=dados.get("alcance", "local"),
@@ -1428,15 +1441,17 @@ REGRA DE TAMANHO DA RESPOSTA
             if len(participantes_ciclo)>1:
                 declaradas_antes=await listar_acoes_cena_sessao(sessao["id"],ciclo)
                 if ctx.author.id in {a["user_id"] for a in declaradas_antes}:
-                    await self.aviso(ctx,f"⏳ **{ficha['nome']} já declarou a ação deste ciclo.** Aguarde os demais participantes.")
+                    await self.aviso(ctx,f"{ctx.author.mention} ⏳ **{ficha['nome']} já declarou a ação deste ciclo.** Aguarde os demais participantes.")
                     return
                 await registrar_acao_cena_sessao(sessao["id"],ciclo,ctx.author.id,ficha["nome"],texto)
                 declaradas=await listar_acoes_cena_sessao(sessao["id"],ciclo)
                 feitos={a["user_id"] for a in declaradas}
-                faltam=[p["personagem_nome"] for p in participantes_ciclo if p["user_id"] not in feitos]
-                if faltam:
+                faltantes=[p for p in participantes_ciclo if p["user_id"] not in feitos]
+                if faltantes:
                     await definir_deadline_ciclo(sessao["id"],300)
-                    await self.aviso(ctx,f"🎭 **Ação de {ficha['nome']} registrada — {len(feitos)}/{len(participantes_ciclo)}.**\n⏳ Aguardando: **{', '.join(faltam)}**. Se ninguém responder, a cena continua automaticamente após **5 min sem uma nova ação**. Use `!passar` para não agir neste ciclo.",segundos=15)
+                    mencoes=" ".join(f"<@{p['user_id']}>" for p in faltantes)
+                    nomes=", ".join(p["personagem_nome"] for p in faltantes)
+                    await self.aviso(ctx,f"{mencoes} 🎭 **Ação de {ficha['nome']} registrada — {len(feitos)}/{len(participantes_ciclo)}.**\n⏳ Aguardando: **{nomes}**. Vocês têm **5 min desde esta última ação**; cada nova declaração reinicia os 5 min. Use `!passar` para não agir neste ciclo.",segundos=120)
                     return
                 try:
                     async with ctx.typing():
@@ -1735,10 +1750,12 @@ REGRA DE TAMANHO DA RESPOSTA
         await registrar_acao_cena_sessao(sessao["id"],sessao["ciclo_cena"],ctx.author.id,ficha["nome"],"[PASSOU O CICLO — nenhuma nova ação voluntária]")
         acoes=await listar_acoes_cena_sessao(sessao["id"],sessao["ciclo_cena"])
         feitos={a["user_id"] for a in acoes}
-        faltam=[p["personagem_nome"] for p in participantes if p["user_id"] not in feitos]
-        if faltam:
+        faltantes=[p for p in participantes if p["user_id"] not in feitos]
+        if faltantes:
             await definir_deadline_ciclo(sessao["id"],300)
-            return await self.aviso(ctx,f"⏭️ **{ficha['nome']} passou.** Aguardando: **{', '.join(faltam)}**.")
+            mencoes=" ".join(f"<@{p['user_id']}>" for p in faltantes)
+            nomes=", ".join(p["personagem_nome"] for p in faltantes)
+            return await self.aviso(ctx,f"{mencoes} ⏭️ **{ficha['nome']} passou.** Aguardando: **{nomes}**. O prazo foi renovado para **5 min**.")
         await limpar_deadline_ciclo(sessao["id"])
         async with ctx.typing():
             await self.resolver_cena_multiplayer(ctx,sessao,acoes)

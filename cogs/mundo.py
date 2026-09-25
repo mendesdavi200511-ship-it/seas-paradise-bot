@@ -402,7 +402,7 @@ class Mundo(commands.Cog):
         if ativos: return
         ctrl=await obter_controle_akuma_spawn()
         if not ctrl:
-            return await agendar_proximo_akuma_spawn(agora+timedelta(minutes=random.randint(60,180)))
+            return await agendar_proximo_akuma_spawn(agora+timedelta(minutes=random.randint(5,30)))
         if ctrl['proximo_spawn_em']>agora: return
         candidatos=[]
         for guild in self.bot.guilds:
@@ -421,7 +421,7 @@ class Mundo(commands.Cog):
         msg=await ch.send(embed=emb,view=AkumaSpawnView(self,sp['id']))
         await vincular_mensagem_akuma_spawn(sp['id'],msg.id)
         # Próximo drop só é elegível horas depois; horário fica persistido.
-        await agendar_proximo_akuma_spawn(expira+timedelta(minutes=random.randint(90,330)))
+        await agendar_proximo_akuma_spawn(expira+timedelta(minutes=random.randint(30,180)))
 
     async def gerar_diario(self):
         ch=self.bot.get_channel(CANAL_EVENTOS_ID)
@@ -461,7 +461,11 @@ class Mundo(commands.Cog):
     async def relogio_mundo(self):
         try:
             await self.gerar_diario()
+        except Exception as e: print('❌ relógio mundo/diário:',type(e).__name__,e)
+        try:
             await self.processar_akuma_spawns()
+        except Exception as e: print('❌ relógio mundo/Akuma:',type(e).__name__,e)
+        try:
             for e in await eventos_para_finalizar(): await self.aplicar_recompensa(e)
             # Caçadores persistentes: reputação alta passa a gerar perseguição sem intervenção de staff.
             for alvo in await candidatos_cacada():
