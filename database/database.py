@@ -2447,6 +2447,37 @@ async def definir_deadline_ciclo(sessao_id, segundos=90):
 async def limpar_deadline_ciclo(sessao_id):
     return await get_pool().execute("UPDATE sessoes_narracao SET ciclo_deadline=NULL WHERE id=$1;", int(sessao_id))
 
+async def reparar_deadlines_ciclos():
+    """Reconstrói relógios perdidos após deploy/restart para ciclos que já possuem ações."""
+    db=get_pool()
+    return await db.execute("""
+        UPDATE sessoes_narracao s
+        SET ciclo_deadline = q.ultima_acao + INTERVAL '300 seconds', atualizada_em=NOW()
+        FROM (
+            SELECT sessao_id, ciclo, MAX(criado_em) AS ultima_acao
+            FROM acoes_cena_sessao
+            GROUP BY sessao_id, ciclo
+        ) q
+        WHERE s.id=q.sessao_id AND s.ciclo_cena=q.ciclo
+          AND s.status='ativa' AND s.iniciada=TRUE AND s.ciclo_deadline IS NULL;
+    """)
+
+async def reparar_deadline_sessao(sessao_id):
+    """Repara o deadline do ciclo atual de uma sessão específica, se estiver ausente."""
+    db=get_pool()
+    return await db.fetchrow("""
+        UPDATE sessoes_narracao s
+        SET ciclo_deadline = q.ultima_acao + INTERVAL '300 seconds', atualizada_em=NOW()
+        FROM (
+            SELECT sessao_id, ciclo, MAX(criado_em) AS ultima_acao
+            FROM acoes_cena_sessao WHERE sessao_id=$1
+            GROUP BY sessao_id, ciclo
+        ) q
+        WHERE s.id=q.sessao_id AND s.ciclo_cena=q.ciclo
+          AND s.id=$1 AND s.status='ativa' AND s.iniciada=TRUE AND s.ciclo_deadline IS NULL
+        RETURNING s.*;
+    """, int(sessao_id))
+
 async def listar_ciclos_expirados():
     return await get_pool().fetch("""SELECT * FROM sessoes_narracao WHERE status='ativa' AND iniciada=TRUE AND ciclo_deadline IS NOT NULL AND ciclo_deadline<=NOW() ORDER BY ciclo_deadline LIMIT 30;""")
 
