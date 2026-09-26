@@ -47,6 +47,38 @@ def _clean_json(text):
 def _clip(s,n=900):
     s=(s or '').strip(); return s if len(s)<=n else s[-n:]
 
+class BossCombatView(discord.ui.View):
+    """Controles discretos da luta; não executam ações pelo jogador."""
+    def __init__(self,cog,user_id):
+        super().__init__(timeout=900)
+        self.cog=cog; self.user_id=user_id
+
+    async def interaction_check(self,interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message('❌ Este combate pertence a outro jogador.',ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label='Estado da luta',emoji='📜',style=discord.ButtonStyle.secondary)
+    async def estado(self,interaction,button):
+        b=await self.cog._ativo(self.user_id)
+        if not b:
+            return await interaction.response.send_message('Esta luta já foi encerrada.',ephemeral=True)
+        estado=(b['estado_contexto'] or 'Nenhum estado registrado.').strip()
+        e=discord.Embed(title='📜 Estado atual',description=estado[:3900],color=discord.Color.blue())
+        await interaction.response.send_message(embed=e,ephemeral=True)
+
+    @discord.ui.button(label='Desistir',emoji='🏳️',style=discord.ButtonStyle.secondary)
+    async def desistir(self,interaction,button):
+        b=await self.cog._ativo(self.user_id)
+        if not b:
+            return await interaction.response.send_message('Esta luta já foi encerrada.',ephemeral=True)
+        await get_pool().execute("UPDATE bosses_rp_ativos SET status='desistiu',finalizado_em=NOW() WHERE id=$1",b['id'])
+        await self.cog._aplicar_cd(self.user_id)
+        for item in self.children: item.disabled=True
+        await interaction.response.edit_message(view=self)
+        await interaction.followup.send('🏳️ Confronto encerrado sem recompensa. Novo Boss disponível em **1 hora**.')
+
 class Progressao(commands.Cog):
     """Boss Rank: instância não-canônica para progressão, com combate contextual persistente."""
     def __init__(self,bot):
@@ -122,6 +154,10 @@ TAREFA:
 9. Não use cabeçalhos, "Turno X", separadores, tópicos, emojis, campos técnicos, explicações de regra ou frases metalinguísticas. Escreva como um narrador de RPG reagindo ao jogador.
 10. A troca precisa ANDAR. Decida concretamente o que acontece com base na causalidade. Não deixe a cena artificialmente "em aberto" só por cautela. Se houver base para acerto, erro, esquiva, bloqueio, ferimento, desarme, queda, incapacidade ou morte, narre isso. Se algo for incerto, escolha a consequência mais coerente com o estado e capacidades.
 11. O Boss deve lutar de verdade: reagir, atacar, pressionar, aproveitar aberturas e sofrer consequências quando cabível. Sem plot armor para nenhum lado.
+12. REGRA DE CONSERVAÇÃO DO ESTADO: antes de escrever cada detalhe, confira se ele já existe em ESTADO FÍSICO AUTORITATIVO ou acabou de ser causado nesta troca. É proibido inventar ferimento anterior, desequilíbrio anterior, arma/posição/cobertura não registradas.
+13. REGRA DE ECONOMIA DE REAÇÃO: não transforme a reação do Boss numa sequência perfeita de várias ações. Uma esquiva não concede automaticamente agarrão + contra-ataque. Cada etapa precisa caber no mesmo intervalo e ser causalmente possível.
+14. Não favoreça o Boss por ser Boss. Resolva primeiro a tentativa do player; a reação nasce do tempo e espaço que realmente restaram. Se a ação do player criou uma abertura válida, o Boss sofre a consequência.
+15. Não escreva que o Boss "percebe antes" sem explicar qual informação física e qual vantagem concreta permitiram isso. Nunca use conhecimento onisciente da intenção do player.
 
 Responda SOMENTE JSON válido:
 {{
@@ -243,7 +279,15 @@ Responda SOMENTE JSON válido:
             narracao=(out.get('narracao') or '').strip()
             if not narracao:
                 narracao='O confronto não pôde ser resolvido neste instante. Tente a ação novamente em alguns segundos.'
-            await ctx.send(narracao)
+            # v72: resposta visual limpa, no padrão de cards do servidor.
+            titulo_boss=str(b['boss_nome']).split(' • Rank ')[0]
+            e=discord.Embed(
+                title=f'⚔️ {titulo_boss} — Rank {b["rank"]}',
+                description=narracao,
+                color=discord.Color.blue()
+            )
+            e.set_footer(text=f"Sea's Paradise • Turno {int(b['turno'])}")
+            await ctx.send(embed=e, view=BossCombatView(self, ctx.author.id))
             desfecho=out.get('desfecho','continua')
             if desfecho=='boss_derrotado':
                 await get_pool().execute("UPDATE bosses_rp_ativos SET hp_atual=0 WHERE id=$1",b['id'])
