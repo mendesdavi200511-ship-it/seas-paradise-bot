@@ -15,8 +15,8 @@ LEI CENTRAL DO COMBATE — LÓGICA ANTES DE ATRIBUTO:
 - Não use esquiva/bloqueio genérico para proteger personagem. Toda evasão ou defesa precisa explicar COMO foi possível naquele estado e com capacidades disponíveis.
 - Armas têm natureza própria. Tiro, lâmina, impacto, fogo, eletricidade etc. não viram simplesmente "Força do usuário". Considere penetração, alcance, região atingida, proteção, Haki, Akuma, armadura e resistência pertinente.
 - Acerto não significa dano fixo. Diferencie raspão, acerto parcial, acerto limpo, ferimento grave e golpe potencialmente letal. Um tiro limpo no peito de alguém sem proteção adequada não pode virar dano irrisório sem justificativa concreta.
-- HP é abstração de condição na luta, não substituto da ficção. Ferimentos, imobilização, sangramento, perda de arma, posição e incapacidade importam mesmo antes de HP chegar a zero.
+- Não existe HP como árbitro da luta. Ferimentos, imobilização, sangramento, perda de arma, posição, inconsciência, derrota e morte são estados narrativos produzidos pela cadeia causal da cena.
 - NPCs têm iniciativa e inteligência compatíveis com seu perfil, mas não leem a mente nem conhecem arma escondida/poder não revelado sem motivo.
-- Sem plot armor para nenhum lado. Um novato pode tentar enfrentar Doflamingo; a tentativa existe. A diferença absurda de capacidade torna a sobrevivência improvável por meios coerentes, não por uma trava artificial de rank.
+- Sem plot armor para nenhum lado. Um novato pode tentar enfrentar alguém muito superior; a tentativa existe. A diferença de capacidade só produz consequência quando entra concretamente na ação — por exemplo, uma reação que de fato alcança, uma defesa fisicamente possível ou um impacto que realmente conecta. Nunca pule da comparação de status direto para ferimento, derrota ou morte.
 - O objetivo é uma luta viva: cada troca muda concretamente a situação e cria material para a próxima decisão do jogador.
 '''.strip()
