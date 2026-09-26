@@ -402,7 +402,9 @@ class Mundo(commands.Cog):
         if ativos: return
         ctrl=await obter_controle_akuma_spawn()
         if not ctrl:
-            return await agendar_proximo_akuma_spawn(agora+timedelta(minutes=random.randint(5,30)))
+            return await agendar_proximo_akuma_spawn(agora+timedelta(hours=random.uniform(4,8)))
+        if 'regra' not in ctrl or ctrl['regra']!='4-8h':
+            return await agendar_proximo_akuma_spawn(agora+timedelta(hours=random.uniform(4,8)))
         if ctrl['proximo_spawn_em']>agora: return
         candidatos=[]
         for guild in self.bot.guilds:
@@ -412,7 +414,7 @@ class Mundo(commands.Cog):
                     perms=ch.permissions_for(guild.me)
                     if perms.send_messages and perms.view_channel: candidatos.append((guild,ch,local))
         if not candidatos:
-            return await agendar_proximo_akuma_spawn(agora+timedelta(minutes=30))
+            return await agendar_proximo_akuma_spawn(agora+timedelta(hours=random.uniform(4,8)))
         guild,ch,local=random.choice(candidatos)
         nome=random.choice(list(AKUMA_SKILLS.keys())); tipo=AKUMA_SKILLS[nome][0]
         expira=agora+timedelta(minutes=30)
@@ -421,7 +423,7 @@ class Mundo(commands.Cog):
         msg=await ch.send(embed=emb,view=AkumaSpawnView(self,sp['id']))
         await vincular_mensagem_akuma_spawn(sp['id'],msg.id)
         # Próximo drop só é elegível horas depois; horário fica persistido.
-        await agendar_proximo_akuma_spawn(expira+timedelta(minutes=random.randint(30,180)))
+        await agendar_proximo_akuma_spawn(agora+timedelta(hours=random.uniform(4,8)))
 
     async def gerar_diario(self):
         ch=self.bot.get_channel(CANAL_EVENTOS_ID)

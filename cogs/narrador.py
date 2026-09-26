@@ -16,6 +16,8 @@ from database.database import get_pool, adicionar_pontos_atributo, adicionar_pon
 
 from database.database import (
     buscar_ficha,
+    buscar_localizacao_jogador,
+    consumir_akuma_encontrada,
     buscar_especializacoes,
     buscar_npc,
     buscar_memorias_npc,
@@ -322,8 +324,44 @@ class Narrador(commands.Cog):
             ciclo = atual['ciclo_cena']
             acoes = await listar_acoes_cena_sessao(atual['id'], ciclo)
             if not acoes:
+                # Cinco minutos completos sem NENHUMA ação desde a última continuação:
+                # o mundo resolve a situação sem inventar decisão dos players e a sessão encerra.
                 await limpar_deadline_ciclo(atual['id'])
-                return False
+                if canal is None:
+                    canal = self.bot.get_channel(cena_id)
+                    if canal is None:
+                        try: canal = await self.bot.fetch_channel(cena_id)
+                        except Exception: canal = None
+                if canal is None:
+                    # restaura o relógio para nova tentativa do watchdog em vez de perder a sessão
+                    await definir_deadline_ciclo(atual['id'], 60)
+                    return False
+                participantes_ativos = await listar_participantes_sessao(atual['id'], somente_ativos=True)
+                hist = await self.historico_compartilhado_sessao(atual['id'])
+                nomes = ", ".join(p['personagem_nome'] for p in participantes_ativos) or "nenhum participante ativo"
+                entrada = f"""ENCERRAMENTO AUTOMÁTICO POR INATIVIDADE — SEA'S PARADISE
+A sessão ficou 5 minutos completos sem nenhuma nova ação de jogador.
+PARTICIPANTES AINDA ATIVOS: {nomes}
+ESTADO PERSISTENTE: {atual['estado_cena'] if 'estado_cena' in atual and atual['estado_cena'] else 'não consolidado'}
+HISTÓRICO RECENTE:
+{hist}
+
+Narre o resultado imediato da situação em 1 a 4 parágrafos curtos. NPCs e ambiente podem concluir ações já em curso e reagir coerentemente ao estado existente, mas NÃO invente novas decisões voluntárias para os jogadores. A cena termina após esta resposta."""
+                try:
+                    r = await self.client.responses.create(model=MODELO_NARRADOR,instructions=PROMPT_NARRADOR,input=entrada,max_output_tokens=650)
+                    texto = (r.output_text or '').strip() or "A cena perde o impulso sem novas ações e chega ao fim por enquanto."
+                except Exception as ex:
+                    print(f"⚠️ Encerramento automático sem ações: {type(ex).__name__}: {ex}")
+                    texto = "Sem novas ações dos participantes, a situação se estabiliza e a cena chega ao fim por enquanto."
+                texto = re.sub(r"\[[A-Z_]+(?::[^\]]*)?\]", "", texto).strip()
+                for parte in dividir_mensagem(texto,3800):
+                    await canal.send(embed=discord.Embed(title="📖 NARRADOR — DESFECHO POR INATIVIDADE",description=parte,color=discord.Color.blue()))
+                resumo = await self.resumo_encerramento_sessao(atual['id'])
+                if await encerrar_sessao_narracao(atual['id'], resumo):
+                    e=discord.Embed(title="🏁 FIM DA NARRAÇÃO",description=resumo,color=discord.Color.gold())
+                    e.set_footer(text="Sessão encerrada automaticamente após 5 min sem ações")
+                    await canal.send(embed=e)
+                return True
             participantes = await listar_participantes_ciclo(atual['id'], ciclo)
             ids_acao = {int(a['user_id']) for a in acoes}
             ausentes = [p for p in participantes if int(p['user_id']) not in ids_acao]
@@ -580,6 +618,10 @@ Seja objetivo: 2 a 6 parágrafos curtos."""
         if not auto:
             try: auto=await self.deve_encerrar_sessao(sessao["id"],texto,declaracoes)
             except Exception as ex: print(f"⚠️ Verificador de encerramento: {ex}")
+        if not auto:
+            # Novo ciclo: se NINGUÉM responder em 5 min, o watchdog produz o desfecho
+            # automático e encerra a sessão. A primeira resposta válida renova estes 300s.
+            await definir_deadline_ciclo(sessao["id"],300)
         if auto:
             resumo=await self.resumo_encerramento_sessao(sessao["id"])
             if await encerrar_sessao_narracao(sessao["id"],resumo):
@@ -1421,6 +1463,16 @@ REGRA DE TAMANHO DA RESPOSTA
             await ctx.send("❌ Sua ação ficou muito grande. Use no máximo 1.500 caracteres.")
             return
 
+        # Ações explícitas de comer/consumir uma Akuma encontrada têm efeito mecânico.
+        # Narrar que comeu a fruta não pode ficar apenas como texto de RP.
+        tnorm = texto.casefold()
+        quer_comer_akuma = bool(re.search(r"\b(como|comer|comendo|consumo|consumir|consumindo|devoro|devorar|mordo|morder)\b", tnorm))
+        if quer_comer_akuma:
+            ak = await consumir_akuma_encontrada(ctx.author.id, texto)
+            if ak:
+                ficha = await buscar_ficha(ctx.author.id)
+                await ctx.send(f"🍈 **{ak['nome']} consumida!** O poder da **{ak['nome']}** agora pertence a **{ficha['nome']}**.")
+
         cena_id = chave_cena(ctx)
         locks.setdefault(cena_id, asyncio.Lock())
         if locks[cena_id].locked():
@@ -1504,47 +1556,18 @@ REGRA DE TAMANHO DA RESPOSTA
                 # conflito_ativo=True e, ainda assim, uma declaração antiga do jogador
                 # bloqueava toda ação seguinte. Em conflito, ciclos servem apenas como
                 # envelopes de persistência; jamais como confirmação/votação de players.
-                conflito_livre = bool(sessao.get("conflito_ativo", False))
-                if not conflito_livre:
-                    try:
-                        conflito_livre = await self.detectar_intencao_combate(texto)
-                    except Exception as ex:
-                        print(f"⚠️ Detector de combate multiplayer: {type(ex).__name__}: {ex}")
-
+                # A mesma fonte de verdade usada por !encerrar precisa ser usada aqui.
+                # Um único fluxo vale para cena normal e conflito: cada participante declara
+                # no máximo uma vez por ciclo. Cada declaração válida RENOVA a janela de
+                # inatividade para 300 segundos; combate não possui mais um atalho paralelo.
                 declaradas_antes=await listar_acoes_cena_sessao(sessao["id"],ciclo)
-
-                if conflito_livre:
-                    # Pode existir ação presa no ciclo atual por versões anteriores.
-                    # Não reutilizamos nem esperamos essas declarações: abrimos um ciclo
-                    # limpo para ESTA ação e a resolvemos imediatamente. Assim o jogador
-                    # pode agir quantas vezes a cena exigir sem depender dos demais.
-                    if declaradas_antes:
-                        sessao = await avancar_ciclo_cena_sessao(sessao["id"])
-                        ciclo = sessao["ciclo_cena"]
-                        participantes_ciclo = await listar_participantes_ciclo(sessao["id"],ciclo)
-                    await limpar_deadline_ciclo(sessao["id"])
-                    await registrar_acao_cena_sessao(sessao["id"],ciclo,ctx.author.id,ficha["nome"],texto)
-                    declaradas=await listar_acoes_cena_sessao(sessao["id"],ciclo)
-                else:
-                    if ctx.author.id in {a["user_id"] for a in declaradas_antes}:
-                        await self.aviso(ctx,f"{ctx.author.mention} ⏳ **{ficha['nome']} já declarou a ação deste ciclo.** Aguarde a resolução atual.")
-                        return
-                    await registrar_acao_cena_sessao(sessao["id"],ciclo,ctx.author.id,ficha["nome"],texto)
-                    declaradas=await listar_acoes_cena_sessao(sessao["id"],ciclo)
-
-                # Em luta não existe votação, confirmação ou espera pelos outros.
-                # A própria ação atual dispara a continuação da cena. O resolver recebe
-                # somente quem efetivamente declarou neste ciclo e já sabe preservar
-                # os demais sem inventar ações para eles.
-                if conflito_livre:
-                    await limpar_deadline_ciclo(sessao["id"])
-                    try:
-                        async with ctx.typing():
-                            await self.resolver_cena_multiplayer(ctx,sessao,declaradas)
-                    except Exception as erro_multi:
-                        print(f"❌ ERRO CENA MULTIPLAYER LIVRE — {type(erro_multi).__name__}: {erro_multi}")
-                        await ctx.send("⚠️ Não consegui continuar a luta agora. Sua ação foi preservada; tente `!resolvercena`.")
+                if ctx.author.id in {a["user_id"] for a in declaradas_antes}:
+                    await self.aviso(ctx,f"{ctx.author.mention} ⏳ **{ficha['nome']} já declarou a ação deste ciclo.** Aguarde os demais ou a resolução automática em até 5 min desde a última resposta.")
                     return
+                await registrar_acao_cena_sessao(sessao["id"],ciclo,ctx.author.id,ficha["nome"],texto)
+                # O reset acontece AQUI, em toda resposta válida, antes de verificar faltantes.
+                await definir_deadline_ciclo(sessao["id"],300)
+                declaradas=await listar_acoes_cena_sessao(sessao["id"],ciclo)
 
                 feitos={a["user_id"] for a in declaradas}
                 faltantes=[p for p in participantes_ciclo if p["user_id"] not in feitos]
@@ -1552,7 +1575,7 @@ REGRA DE TAMANHO DA RESPOSTA
                     await definir_deadline_ciclo(sessao["id"],300)
                     mencoes=" ".join(f"<@{p['user_id']}>" for p in faltantes)
                     nomes=", ".join(p["personagem_nome"] for p in faltantes)
-                    await self.aviso(ctx,f"{mencoes} 🎭 **Ação de {ficha['nome']} registrada — {len(feitos)}/{len(participantes_ciclo)}.**\n⏳ Cena coletiva normal aguardando: **{nomes}**. Prazo: **5 min**. Em conflito/luta, as ações passam a resolver imediatamente, sem confirmação dos demais.",segundos=120)
+                    await self.aviso(ctx,f"{mencoes} 🎭 **Ação de {ficha['nome']} registrada — {len(feitos)}/{len(participantes_ciclo)}.**\n⏳ Aguardando: **{nomes}**. O prazo foi renovado para **5 min desde esta última resposta**. Se não responderem, saem da narração e a cena continua automaticamente com quem agiu.",segundos=120)
                     return
                 try:
                     async with ctx.typing():

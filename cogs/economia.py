@@ -7,7 +7,7 @@ from data.economia import ITENS, EMBARCACOES, LOJAS, normalizar_local
 from data.navegacao import LOCAIS, ROTAS_INFO, OBSTACULOS, destinos_de, normalizar_destino
 from database.database import (
     buscar_ficha, buscar_localizacao_jogador, definir_localizacao_jogador,
-    buscar_inventario, buscar_item_inventario, comprar_item, vender_item,
+    buscar_inventario, buscar_item_inventario, listar_akumas_inventario, comprar_item, vender_item,
     consumir_item, comprar_embarcacao, buscar_embarcacoes, buscar_embarcacao_ativa,
     renomear_embarcacao, reparar_embarcacao, registrar_transacao_economia, buscar_especializacoes,
     buscar_viagem_ativa, criar_viagem, viagens_pendentes, criar_evento_viagem, evento_aberto_viagem, liberar_rota_especial, rota_especial_liberada,
@@ -126,10 +126,16 @@ class Economia(commands.Cog):
         if not rows: emb.add_field(name="📦 Itens",value="Seu inventário está vazio.",inline=False)
         else:
             grupos={}
+            akumas={a['item_id']:a for a in await listar_akumas_inventario(ctx.author.id)}
             for r in rows:
-                d=ITENS.get(r['item_id']);
-                if not d: continue
-                grupos.setdefault(d['categoria'],[]).append(f"{d['emoji']} **{d['nome']}** ×{r['quantidade']}")
+                d=ITENS.get(r['item_id'])
+                if d:
+                    grupos.setdefault(d['categoria'],[]).append(f"{d['emoji']} **{d['nome']}** ×{r['quantidade']}")
+                elif r['item_id'] in akumas:
+                    a=akumas[r['item_id']]
+                    grupos.setdefault('akuma no mi',[]).append(f"🍈 **{a['nome']}** • {a['tipo'].title()} ×{r['quantidade']}")
+                else:
+                    grupos.setdefault('outros',[]).append(f"📦 **{r['item_id']}** ×{r['quantidade']}")
             for cat,linhas in grupos.items(): emb.add_field(name=f"📦 {cat.title()}",value="\n".join(linhas)[:1024],inline=False)
         await ctx.send(embed=emb,view=InventarioView(ctx.author.id,rows) if rows else None)
 
