@@ -115,8 +115,8 @@ TAREFA:
 2. Resolva em ordem causal todas as etapas realmente executadas. Use o estado anterior. Se uma etapa depende de outra e a anterior falha, respeite isso.
 3. Decida a reação do Boss somente com movimentos possíveis no estado atual e capacidades plausíveis. Ele pode atacar, defender, escapar, agarrar, usar terreno etc.
 4. Atributos pesam, mas LÓGICA vem primeiro. Explique concretamente como uma diferença de atributo permitiu uma reação; não use rank como trava.
-5. Classifique dano ao Boss e ao player por CONSEQUÊNCIA FÍSICA: nenhum|raspao|leve|solido|grave|critico|letal. "letal" só quando a troca realmente produz condição fatal/incapacitante compatível.
-6. Um tiro limpo em torso sem proteção/resistência especial adequada não pode ser "raspao" só por rank. Uma lâmina bloqueada por armadura/Haki pode ser nenhum/raspao. Natureza do ataque importa.
+5. NÃO use HP, barra de vida, pontos de condição nem dano numérico. Ferimentos existem somente como fatos narrativos persistentes no estado (ex.: corte no braço, perna quebrada, inconsciente, morto).
+6. Um tiro, lâmina, impacto ou poder deve ser resolvido pela cadeia causal concreta: alcance, trajetória, reação possível, proteção, natureza do ataque e capacidades relevantes. Rank/status sozinho nunca decide acerto, defesa ou sobrevivência.
 7. Produza NOVO ESTADO concreto para o próximo turno: distância, postura, agarrões, armas em mãos/no chão, cobertura, ferimentos e vantagens. Não apague fatos sem resolvê-los.
 8. Narração curta, natural, sem falar em rolagem, fórmula, IA ou "chance".
 
@@ -124,46 +124,24 @@ Responda SOMENTE JSON válido:
 {{
  "acao_interpretada":"o que o player realmente tentou/executou",
  "resolucao_player":"resultado concreto da ação do player",
- "dano_boss":"nenhum|raspao|leve|solido|grave|critico|letal",
  "reacao_boss":"ação/reação concreta do Boss após/entre as etapas, se possível",
  "resolucao_boss":"resultado concreto da ação do Boss",
- "dano_player":"nenhum|raspao|leve|solido|grave|critico|letal",
- "novo_estado":"estado físico completo e autoritativo após a troca",
+ "novo_estado":"estado físico completo e autoritativo após a troca, incluindo ferimentos narrativos",
+ "desfecho":"continua|boss_derrotado|player_derrotado",
  "resumo_turno":"uma frase factual para memória"
 }}'''
         async with AI_LIMIT:
             r=await self.client.responses.create(model='gpt-5.6-luna',input=prompt,max_output_tokens=850)
         out=_clean_json(r.output_text)
-        for k in ('dano_boss','dano_player'):
-            v=str(out.get(k,'nenhum')).casefold().replace('ã','a').replace('ç','c')
-            aliases={'raspão':'raspao','sólido':'solido','crítico':'critico','nenhum':'nenhum','leve':'leve','grave':'grave','letal':'letal'}
-            v=aliases.get(str(out.get(k,'nenhum')).casefold(),v)
-            if v not in SEVERITY_FRACTIONS:v='nenhum'
-            out[k]=v
+        desfecho=str(out.get('desfecho','continua')).casefold().strip()
+        if desfecho not in ('continua','boss_derrotado','player_derrotado'):desfecho='continua'
+        out['desfecho']=desfecho
         return out
 
     def _fallback_troca(self, acao, ficha, boss, stats):
-        """Árbitro determinístico de segurança: a luta nunca trava por falha de IA/JSON."""
-        bf=int(boss['boss_forca'] or BOSS_RANKS[boss['rank']]['attr']); br=int(boss['boss_resistencia'] or BOSS_RANKS[boss['rank']]['attr']); bv=int(boss['boss_velocidade'] or BOSS_RANKS[boss['rank']]['attr'])
-        texto=(acao or '').casefold()
-        ofensiva=any(x in texto for x in ('atac','golp','soco','chut','cort','dispar','tiro','perf','espad','sang','acert'))
-        defensiva=any(x in texto for x in ('esquiv','defend','bloque','recu','desvi','curv','step','cobertura'))
-        p_atk=max(stats['forca'],stats['velocidade'] if any(x in texto for x in ('tiro','dispar','rápid','rapido')) else stats['forca'])
-        ratio_atk=p_atk/max(1,br); ratio_boss=bf/max(1,stats['resistencia']); speed=stats['velocidade']/max(1,bv)
-        if not ofensiva: db='nenhum'
-        elif ratio_atk>=1.8: db='grave'
-        elif ratio_atk>=1.15: db='solido'
-        elif ratio_atk>=.70: db='leve'
-        elif ratio_atk>=.40: db='raspao'
-        else: db='nenhum'
-        mitig=(1.35 if defensiva and speed>=.75 else 1.0)
-        rb=ratio_boss/mitig
-        if rb>=2.2: dp='grave'
-        elif rb>=1.3: dp='solido'
-        elif rb>=.75: dp='leve'
-        elif rb>=.40: dp='raspao'
-        else: dp='nenhum'
-        return {'acao_interpretada':acao,'resolucao_player':('A ação encontra uma abertura e produz efeito compatível com a diferença física.' if db!='nenhum' else 'A tentativa é contida pela defesa, distância ou diferença física do Boss.'),'dano_boss':db,'reacao_boss':'O Boss reage imediatamente, preservando a continuidade da troca.','resolucao_boss':('A resposta do Boss alcança o personagem.' if dp!='nenhum' else 'A resposta não consegue impor dano relevante.'),'dano_player':dp,'novo_estado':boss['estado_contexto'] or self._estado_inicial(ficha,boss['boss_nome']),'resumo_turno':'Troca resolvida pelo árbitro mecânico de segurança.'}
+        """Fallback narrativo conservador: preserva a cena sem inventar HP ou vitória automática."""
+        estado=boss['estado_contexto'] or self._estado_inicial(ficha,boss['boss_nome'])
+        return {'acao_interpretada':acao,'resolucao_player':'A ação é executada até o ponto que o estado atual permite, sem presumir automaticamente o resultado pretendido.','reacao_boss':'O Boss reage a partir da posição e das condições já estabelecidas na cena.','resolucao_boss':'A troca permanece aberta; nenhum desfecho irreversível é imposto sem base causal suficiente.','novo_estado':estado,'desfecho':'continua','resumo_turno':'A troca continuou sem desfecho automático por falta de resolução segura.'}
 
     def _dano_por_severidade(self,severity,hp_max):
         return max(0,round(int(hp_max)*SEVERITY_FRACTIONS.get(severity,0)))
@@ -174,7 +152,7 @@ Responda SOMENTE JSON válido:
     @commands.command(name='bosses',aliases=['bosslocal','chefes'])
     async def bosses(self,ctx):
         e=discord.Embed(title='👹 BOSSES DE PROGRESSÃO',description='Lutas **não-canônicas** para evolução. Estão sempre disponíveis, mas só podem ser iniciadas no canal da sua localização atual. Escolha `!boss <rank>`.',color=discord.Color.dark_red())
-        for rank,d in BOSS_RANKS.items():e.add_field(name=f'Rank {rank} • {RANK_LABEL.get(rank,rank)}',value=f'❤️ {d["hp"]:,} HP • ⚔️ referência {d["attr"]:,}\n`!boss {rank}`',inline=True)
+        for rank,d in BOSS_RANKS.items():e.add_field(name=f'Rank {rank} • {RANK_LABEL.get(rank,rank)}',value=f'⚔️ referência física {d["attr"]:,}\n`!boss {rank}`',inline=True)
         e.set_footer(text='Após vitória, derrota ou desistência: 1h de cooldown.')
         await ctx.send(embed=e)
 
@@ -199,7 +177,7 @@ Responda SOMENTE JSON válido:
         row=await get_pool().fetchrow('''INSERT INTO bosses_rp_ativos(user_id,boss_nome,localizacao,rank,hp_max,hp_atual,player_hp_max,player_hp_atual,boss_estilo,turno,player_focus,boss_forca,boss_resistencia,boss_velocidade,estado_contexto,historico_contexto)
             VALUES($1,$2,$3,$4,$5,$5,$6,$6,$7,1,0,$8,$9,$10,$11,'') RETURNING *''',ctx.author.id,bn,normalizar_destino(estado['localizacao']) if estado else canal,rank,d['hp'],hp_player,estilo,bf,br,bv,estado0)
         e=discord.Embed(title=f'👹 {bn}',description='Instância **não-canônica** de progressão, mas a luta segue as mesmas leis físicas/narrativas do Sea\'s Paradise. Rank não decide ação sozinho.',color=discord.Color.dark_red())
-        e.add_field(name='❤️ Condição',value=f'Boss {row["hp_atual"]}/{row["hp_max"]} • Você {row["player_hp_atual"]}/{row["player_hp_max"]}',inline=False)
+        e.add_field(name='🎬 Resolução',value='Sem barra de vida: ferimentos, incapacitação, derrota e morte são resolvidos pela lógica da narração e ficam registrados no estado da luta.',inline=False)
         e.add_field(name='⚔️ Perfil',value=estilo,inline=False); e.add_field(name='Como lutar',value='`!bossacao <sua ação>` — descreva livremente o que tenta fazer.',inline=False)
         await ctx.send(embed=e)
 
@@ -237,29 +215,27 @@ Responda SOMENTE JSON válido:
             except Exception as ex:
                 print(f'⚠️ Árbitro Boss IA falhou; usando fallback mecânico: {type(ex).__name__}: {ex}')
                 out=self._fallback_troca(acao,ficha,b,stats)
-            boss_hp=int(b['hp_atual']); player_hp=int(b['player_hp_atual']); boss_dmg=self._dano_por_severidade(out['dano_boss'],b['hp_max']); player_dmg=self._dano_por_severidade(out['dano_player'],b['player_hp_max'])
-            boss_hp=max(0,boss_hp-boss_dmg); player_hp=max(0,player_hp-player_dmg)
             resumo=_clip(out.get('resumo_turno') or f"{out.get('resolucao_player','')} {out.get('resolucao_boss','')}",500)
             hist=_clip((b['historico_contexto'] or '')+f"\nT{b['turno']}: {resumo}",1800)
             novo=_clip(out.get('novo_estado') or b['estado_contexto'],1400)
-            await get_pool().execute('''UPDATE bosses_rp_ativos SET hp_atual=$2,player_hp_atual=$3,turno=turno+1,estado_contexto=$4,historico_contexto=$5 WHERE id=$1''',b['id'],boss_hp,player_hp,novo,hist)
+            await get_pool().execute('UPDATE bosses_rp_ativos SET turno=turno+1,estado_contexto=$2,historico_contexto=$3 WHERE id=$1',b['id'],novo,hist)
             lines=[f'⚔️ **Turno {b["turno"]} — {ficha["nome"]} vs. {b["boss_nome"]}**',f'🗣️ *{out.get("acao_interpretada",acao)}*',f'\n🎬 {out.get("resolucao_player","A ação é resolvida.")}']
-            if boss_dmg:lines.append(f'💥 **{boss_dmg} de condição** removida do Boss ({out["dano_boss"]}).')
             if out.get('reacao_boss'):lines.append(f'\n👹 *{out["reacao_boss"]}*')
             if out.get('resolucao_boss'):lines.append(f'🎬 {out["resolucao_boss"]}')
-            if player_dmg:lines.append(f'💢 Você perde **{player_dmg} de condição** ({out["dano_player"]}).')
-            lines.append(f'\n❤️ Boss: **{boss_hp}/{b["hp_max"]}** • ❤️ Você: **{player_hp}/{b["player_hp_max"]}**')
             await ctx.send('\n'.join(lines))
-            if boss_hp<=0:return await self._vitoria(ctx,b)
-            if player_hp<=0:
+            desfecho=out.get('desfecho','continua')
+            if desfecho=='boss_derrotado':
+                await get_pool().execute("UPDATE bosses_rp_ativos SET hp_atual=0 WHERE id=$1",b['id'])
+                return await self._vitoria(ctx,b)
+            if desfecho=='player_derrotado':
                 await get_pool().execute("UPDATE bosses_rp_ativos SET status='derrota',finalizado_em=NOW() WHERE id=$1 AND status='ativo'",b['id']); await self._aplicar_cd(ctx.author.id)
-                await ctx.send('💀 **DERROTA.** A instância termina sem recompensa; isso não mata seu personagem no cânone.\n⏳ Novo Boss em **1 hora**.')
+                return await ctx.send('🏳️ **DERROTA NARRATIVA.** O confronto terminou conforme o estado descrito acima; isso não mata automaticamente seu personagem no cânone.\n⏳ Novo Boss em **1 hora**.')
 
     async def _vitoria(self,ctx,b):
         async with get_pool().acquire() as c:
             async with c.transaction():
                 locked=await c.fetchrow("SELECT * FROM bosses_rp_ativos WHERE id=$1 FOR UPDATE",b['id'])
-                if not locked or locked['status']!='ativo' or locked['hp_atual']>0:return
+                if not locked or locked['status']!='ativo':return
                 r=_reward(locked['rank']); await c.execute("UPDATE bosses_rp_ativos SET status='vitoria',finalizado_em=NOW() WHERE id=$1",b['id']); await c.execute("UPDATE fichas SET berries=berries+$2,pontos_atributo=pontos_atributo+$3,reputacao=reputacao+$4 WHERE user_id=$1",ctx.author.id,r['berries'],r['pontos'],r['rep'])
                 if r['pct']:await c.execute("INSERT INTO pontos_percentuais(user_id,disponiveis) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET disponiveis=pontos_percentuais.disponiveis+EXCLUDED.disponiveis",ctx.author.id,r['pct'])
         await self._aplicar_cd(ctx.author.id); await ctx.send(f'🏆 **BOSS RANK {b["rank"]} DERROTADO!**\n💰 ฿ {_fmt(r["berries"])}\n📈 +{r["pontos"]} pontos de atributo'+(f' • +{r["pct"]}% disponível' if r['pct'] else '')+f'\n🌍 +{r["rep"]} reputação\n⏳ Próximo Boss em **1 hora**.')

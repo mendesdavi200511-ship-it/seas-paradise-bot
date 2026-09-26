@@ -7,7 +7,7 @@ from data.economia import ITENS, EMBARCACOES, LOJAS, normalizar_local
 from data.navegacao import LOCAIS, ROTAS_INFO, OBSTACULOS, destinos_de, normalizar_destino
 from database.database import (
     buscar_ficha, buscar_localizacao_jogador, definir_localizacao_jogador,
-    buscar_inventario, buscar_item_inventario, listar_akumas_inventario, comprar_item, vender_item,
+    buscar_inventario, buscar_item_inventario, listar_akumas_inventario, consumir_akuma_encontrada, comprar_item, vender_item,
     consumir_item, comprar_embarcacao, buscar_embarcacoes, buscar_embarcacao_ativa,
     renomear_embarcacao, reparar_embarcacao, registrar_transacao_economia, buscar_especializacoes,
     buscar_viagem_ativa, criar_viagem, viagens_pendentes, criar_evento_viagem, evento_aberto_viagem, liberar_rota_especial, rota_especial_liberada,
@@ -90,10 +90,33 @@ class LojaView(discord.ui.View):
         super().__init__(timeout=300); itens=[(x,0) for x in loja['itens'] if x in ITENS]
         if itens: self.add_item(ItemSelect(user_id,itens,"loja"))
 
+class AkumaSelect(discord.ui.Select):
+    def __init__(self,user_id,akumas):
+        self.user_id=user_id
+        opts=[discord.SelectOption(label=a['nome'][:100],value=str(a['id']),emoji='🍈',description=f"{a['tipo'].title()} • consumir para obter o poder"[:100]) for a in akumas[:25]]
+        super().__init__(placeholder="🍈 Selecione uma Akuma no Mi...",options=opts)
+    async def callback(self,interaction):
+        if interaction.user.id!=self.user_id:return await interaction.response.send_message("❌ Este painel pertence a outro jogador.",ephemeral=True)
+        akumas=await listar_akumas_inventario(self.user_id)
+        a=next((x for x in akumas if str(x['id'])==self.values[0]),None)
+        if not a:return await interaction.response.send_message("❌ Essa fruta não está mais disponível.",ephemeral=True)
+        await interaction.response.edit_message(embed=discord.Embed(title=f"🍈 {a['nome']}",description=f"**Tipo:** {a['tipo'].title()}\n\nConsumir a fruta concede seu poder ao personagem. Um personagem que já possui Akuma no Mi não pode consumir outra.",color=discord.Color.purple()),view=AkumaItemView(self.user_id,a['nome']))
+
+class AkumaItemView(discord.ui.View):
+    def __init__(self,user_id,nome):super().__init__(timeout=180);self.user_id=user_id;self.nome=nome
+    @discord.ui.button(label="Consumir Akuma no Mi",emoji="🍈",style=discord.ButtonStyle.success)
+    async def consumir(self,interaction,button):
+        if interaction.user.id!=self.user_id:return await interaction.response.send_message("❌ Este painel não é seu.",ephemeral=True)
+        ak=await consumir_akuma_encontrada(self.user_id,self.nome)
+        if not ak:return await interaction.response.send_message("❌ Não foi possível consumir essa fruta. Ela pode ter expirado, já ter sido usada ou seu personagem já possuir uma Akuma no Mi.",ephemeral=True)
+        await interaction.response.send_message(f"🍈 **{ak['nome']} consumida!** O poder da **{ak['nome']}** agora pertence ao seu personagem.")
+
 class InventarioView(discord.ui.View):
-    def __init__(self,user_id,rows):
-        super().__init__(timeout=300); itens=[(r['item_id'],r['quantidade']) for r in rows if r['item_id'] in ITENS]
-        if itens: self.add_item(ItemSelect(user_id,itens,"inventario"))
+    def __init__(self,user_id,rows,akumas=None):
+        super().__init__(timeout=300)
+        itens=[(r['item_id'],r['quantidade']) for r in rows if r['item_id'] in ITENS]
+        if itens:self.add_item(ItemSelect(user_id,itens,"inventario"))
+        if akumas:self.add_item(AkumaSelect(user_id,akumas))
 
 class NavioSelect(discord.ui.Select):
     def __init__(self,user_id,barcos):
@@ -121,12 +144,13 @@ class Economia(commands.Cog):
         ficha=await buscar_ficha(ctx.author.id)
         if not ficha:return await ctx.send("❌ Você ainda não possui ficha.")
         rows=await buscar_inventario(ctx.author.id)
+        akumas_lista=list(await listar_akumas_inventario(ctx.author.id))
         emb=discord.Embed(title="🎒 INVENTÁRIO",description="━━━━━━━━━━━━━━━━━━",color=COR)
         emb.add_field(name="💰 Berries",value=dinheiro(ficha['berries']),inline=False)
         if not rows: emb.add_field(name="📦 Itens",value="Seu inventário está vazio.",inline=False)
         else:
             grupos={}
-            akumas={a['item_id']:a for a in await listar_akumas_inventario(ctx.author.id)}
+            akumas={a['item_id']:a for a in akumas_lista}
             for r in rows:
                 d=ITENS.get(r['item_id'])
                 if d:
@@ -137,7 +161,7 @@ class Economia(commands.Cog):
                 else:
                     grupos.setdefault('outros',[]).append(f"📦 **{r['item_id']}** ×{r['quantidade']}")
             for cat,linhas in grupos.items(): emb.add_field(name=f"📦 {cat.title()}",value="\n".join(linhas)[:1024],inline=False)
-        await ctx.send(embed=emb,view=InventarioView(ctx.author.id,rows) if rows else None)
+        await ctx.send(embed=emb,view=InventarioView(ctx.author.id,rows,akumas_lista) if rows else None)
 
     @commands.command()
     async def loja(self,ctx):
