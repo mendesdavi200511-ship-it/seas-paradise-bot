@@ -745,7 +745,8 @@ async def criar_tabelas():
         # Drops espontâneos de Akuma no Mi em canais de ilhas. Persistem entre redeploys.
         await conn.execute("""CREATE TABLE IF NOT EXISTS akuma_spawns_mundo (id BIGSERIAL PRIMARY KEY, guild_id BIGINT NOT NULL, channel_id BIGINT NOT NULL, localizacao TEXT NOT NULL, nome TEXT NOT NULL, tipo TEXT NOT NULL, mensagem_id BIGINT, status TEXT NOT NULL DEFAULT 'ativo', criado_em TIMESTAMPTZ DEFAULT NOW(), expira_em TIMESTAMPTZ NOT NULL, coletado_por BIGINT, coletado_em TIMESTAMPTZ);""")
         await conn.execute("""CREATE INDEX IF NOT EXISTS idx_akuma_spawns_status_expira ON akuma_spawns_mundo(status,expira_em);""")
-        await conn.execute("""CREATE TABLE IF NOT EXISTS akuma_spawn_controle (id SMALLINT PRIMARY KEY DEFAULT 1 CHECK(id=1), proximo_spawn_em TIMESTAMPTZ NOT NULL);""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS akuma_spawn_controle (id SMALLINT PRIMARY KEY DEFAULT 1 CHECK(id=1), proximo_spawn_em TIMESTAMPTZ NOT NULL, regra TEXT NOT NULL DEFAULT 'legado');""")
+        await conn.execute("ALTER TABLE akuma_spawn_controle ADD COLUMN IF NOT EXISTS regra TEXT NOT NULL DEFAULT 'legado';")
         await conn.execute("""CREATE TABLE IF NOT EXISTS execucoes_diarias (chave TEXT PRIMARY KEY, executado_em TIMESTAMPTZ DEFAULT NOW());""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS sorteios_diarios (id BIGSERIAL PRIMARY KEY, premio TEXT NOT NULL, valor INTEGER NOT NULL DEFAULT 0, mensagem_id BIGINT, encerra_em TIMESTAMPTZ NOT NULL, status TEXT DEFAULT 'aberto', vencedor_user_id BIGINT);""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS participantes_sorteio (sorteio_id BIGINT REFERENCES sorteios_diarios(id) ON DELETE CASCADE, user_id BIGINT NOT NULL, PRIMARY KEY(sorteio_id,user_id));""")
@@ -2857,6 +2858,26 @@ async def organizacao_user(uid): return await get_pool().fetchrow("SELECT o.*,m.
 async def execucao_diaria_feita(chave): return bool(await get_pool().fetchrow("SELECT 1 FROM execucoes_diarias WHERE chave=$1",chave))
 async def marcar_execucao_diaria(chave): return await get_pool().execute("INSERT INTO execucoes_diarias(chave) VALUES($1) ON CONFLICT DO NOTHING",chave)
 async def registrar_akuma_encontrada(uid,item,nome,tipo,expira): return await get_pool().execute("INSERT INTO akumas_encontradas(user_id,item_id,nome,tipo,expira_em) VALUES($1,$2,$3,$4,$5)",uid,item,nome,tipo,expira)
+async def listar_akumas_inventario(uid):
+    return await get_pool().fetch("SELECT * FROM akumas_encontradas WHERE user_id=$1 AND consumida=FALSE AND expira_em>NOW() ORDER BY encontrada_em",int(uid))
+
+async def consumir_akuma_encontrada(uid, texto=''):
+    db=get_pool(); texto=(texto or '').casefold()
+    async with db.acquire() as c:
+        async with c.transaction():
+            ficha=await c.fetchrow("SELECT akuma FROM fichas WHERE user_id=$1 FOR UPDATE",int(uid))
+            if not ficha or (ficha['akuma'] and ficha['akuma']!='Nenhuma'): return None
+            frutas=await c.fetch("SELECT * FROM akumas_encontradas WHERE user_id=$1 AND consumida=FALSE AND expira_em>NOW() ORDER BY encontrada_em FOR UPDATE",int(uid))
+            if not frutas: return None
+            escolhida=next((a for a in frutas if a['nome'].casefold().replace(' no mi','') in texto or a['nome'].casefold() in texto),None)
+            if escolhida is None and len(frutas)==1: escolhida=frutas[0]
+            if escolhida is None: return None
+            await c.execute("UPDATE fichas SET akuma=$2 WHERE user_id=$1",int(uid),escolhida['nome'])
+            await c.execute("UPDATE inventario SET quantidade=GREATEST(0,quantidade-1) WHERE user_id=$1 AND item_id=$2",int(uid),escolhida['item_id'])
+            await c.execute("UPDATE akumas_encontradas SET consumida=TRUE WHERE id=$1",escolhida['id'])
+            await c.execute("""INSERT INTO especializacoes(user_id,categoria,nome,percentual,limite,desbloqueado_por) VALUES($1,'Akuma no Mi',$2,0,300,'consumo') ON CONFLICT(user_id,categoria,nome) DO NOTHING""",int(uid),escolhida['nome'])
+            return escolhida
+
 async def akumas_expiradas(): return await get_pool().fetch("SELECT * FROM akumas_encontradas WHERE consumida=FALSE AND expira_em<=NOW()")
 async def expirar_akuma(i):
     db=get_pool()
@@ -2909,8 +2930,8 @@ async def transferir_capitania(tid,capitao_atual,novo):
 async def obter_controle_akuma_spawn():
     return await get_pool().fetchrow("SELECT * FROM akuma_spawn_controle WHERE id=1")
 
-async def agendar_proximo_akuma_spawn(quando):
-    return await get_pool().fetchrow("""INSERT INTO akuma_spawn_controle(id,proximo_spawn_em) VALUES(1,$1) ON CONFLICT(id) DO UPDATE SET proximo_spawn_em=EXCLUDED.proximo_spawn_em RETURNING *""",quando)
+async def agendar_proximo_akuma_spawn(quando, regra='4-8h'):
+    return await get_pool().fetchrow("""INSERT INTO akuma_spawn_controle(id,proximo_spawn_em,regra) VALUES(1,$1,$2) ON CONFLICT(id) DO UPDATE SET proximo_spawn_em=EXCLUDED.proximo_spawn_em,regra=EXCLUDED.regra RETURNING *""",quando,regra)
 
 async def criar_akuma_spawn(guild_id,channel_id,localizacao,nome,tipo,expira_em):
     return await get_pool().fetchrow("""INSERT INTO akuma_spawns_mundo(guild_id,channel_id,localizacao,nome,tipo,expira_em) VALUES($1,$2,$3,$4,$5,$6) RETURNING *""",guild_id,channel_id,localizacao,nome,tipo,expira_em)
