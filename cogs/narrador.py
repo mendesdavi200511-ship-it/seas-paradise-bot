@@ -1493,23 +1493,48 @@ REGRA DE TAMANHO DA RESPOSTA
                 await ctx.send("⏳ Você entrou com um ciclo já em andamento. Aguarde a resolução atual; você participa do próximo.")
                 return
 
-            # MULTIPLAYER NORMAL: primeiro coletamos UMA ação de cada participante.
-            # Só depois decidimos/resolvemos a cena em conjunto. Isso impede que uma
-            # ação agressiva do segundo player desvie para combate antes de incluir o primeiro.
+            # MULTIPLAYER possui dois ritmos:
+            # 1) cena normal/cooperativa: coleta uma declaração de cada participante;
+            # 2) conflito/luta: fluxo livre. Cada !acao resolve IMEDIATAMENTE e os NPCs
+            #    reagem sem exigir confirmação dos demais jogadores. Quem não falou
+            #    apenas permanece na situação anterior; não recebe ação inventada.
             if len(participantes_ciclo)>1:
                 declaradas_antes=await listar_acoes_cena_sessao(sessao["id"],ciclo)
                 if ctx.author.id in {a["user_id"] for a in declaradas_antes}:
-                    await self.aviso(ctx,f"{ctx.author.mention} ⏳ **{ficha['nome']} já declarou a ação deste ciclo.** Aguarde os demais participantes.")
+                    await self.aviso(ctx,f"{ctx.author.mention} ⏳ **{ficha['nome']} já declarou a ação deste ciclo.** Aguarde a resolução atual.")
                     return
+
+                conflito_livre = bool(sessao.get("conflito_ativo", False))
+                if not conflito_livre:
+                    try:
+                        conflito_livre = await self.detectar_intencao_combate(texto)
+                    except Exception as ex:
+                        print(f"⚠️ Detector de combate multiplayer: {type(ex).__name__}: {ex}")
+
                 await registrar_acao_cena_sessao(sessao["id"],ciclo,ctx.author.id,ficha["nome"],texto)
                 declaradas=await listar_acoes_cena_sessao(sessao["id"],ciclo)
+
+                # Em luta não existe votação, confirmação ou espera pelos outros.
+                # A própria ação atual dispara a continuação da cena. O resolver recebe
+                # somente quem efetivamente declarou neste ciclo e já sabe preservar
+                # os demais sem inventar ações para eles.
+                if conflito_livre:
+                    await limpar_deadline_ciclo(sessao["id"])
+                    try:
+                        async with ctx.typing():
+                            await self.resolver_cena_multiplayer(ctx,sessao,declaradas)
+                    except Exception as erro_multi:
+                        print(f"❌ ERRO CENA MULTIPLAYER LIVRE — {type(erro_multi).__name__}: {erro_multi}")
+                        await ctx.send("⚠️ Não consegui continuar a luta agora. Sua ação foi preservada; tente `!resolvercena`.")
+                    return
+
                 feitos={a["user_id"] for a in declaradas}
                 faltantes=[p for p in participantes_ciclo if p["user_id"] not in feitos]
                 if faltantes:
                     await definir_deadline_ciclo(sessao["id"],300)
                     mencoes=" ".join(f"<@{p['user_id']}>" for p in faltantes)
                     nomes=", ".join(p["personagem_nome"] for p in faltantes)
-                    await self.aviso(ctx,f"{mencoes} 🎭 **Ação de {ficha['nome']} registrada — {len(feitos)}/{len(participantes_ciclo)}.**\n⏳ Aguardando: **{nomes}**. Vocês têm **5 min desde esta última ação**; cada nova declaração reinicia os 5 min. Use `!passar` para não agir neste ciclo.",segundos=120)
+                    await self.aviso(ctx,f"{mencoes} 🎭 **Ação de {ficha['nome']} registrada — {len(feitos)}/{len(participantes_ciclo)}.**\n⏳ Cena coletiva normal aguardando: **{nomes}**. Prazo: **5 min**. Em conflito/luta, as ações passam a resolver imediatamente, sem confirmação dos demais.",segundos=120)
                     return
                 try:
                     async with ctx.typing():
@@ -1698,7 +1723,7 @@ REGRA DE TAMANHO DA RESPOSTA
 
     @commands.command(name="resolver")
     async def resolver_combate(self,ctx):
-        await self.aviso(ctx,"🎭 Não existe mais uma rodada separada para resolver. Use `!acao`; a cena resolve quando todos agirem ou o tempo do ciclo acabar.")
+        await self.aviso(ctx,"🎭 Não existe mais uma rodada separada para resolver. Use `!acao`. Em luta/conflito cada ação resolve imediatamente; fora de conflito, a cena coletiva resolve quando todos agirem ou o tempo do ciclo acabar.")
 
 
     @commands.command(name="iniciar", aliases=["iniciarnarracao", "iniciarnarração"])
@@ -1778,7 +1803,7 @@ REGRA DE TAMANHO DA RESPOSTA
             await ctx.send(f"➕ **{ficha['nome']} entrou na narração em andamento.**"+detalhe); return
         if len(ps)>=qtd:
             await marcar_sessao_iniciada(s["id"])
-            await ctx.send(f"▶️ **NARRAÇÃO INICIADA — {len(ps)} JOGADORES**\n👥 "+", ".join(p["personagem_nome"] for p in ps)+"\nCada `!acao` entra no ciclo vivo da cena; todos agiram = resolve na hora, ausência por 5 min = a cena continua sem travar.")
+            await ctx.send(f"▶️ **NARRAÇÃO INICIADA — {len(ps)} JOGADORES**\n👥 "+", ".join(p["personagem_nome"] for p in ps)+"\nCada `!acao` entra na cena viva. Em luta/conflito, cada ação resolve imediatamente sem confirmação dos demais; fora de conflito, todos agiram = resolve na hora e ausência por 5 min não trava a cena.")
         else: await ctx.send(f"✅ **{ficha['nome']} entrou — {len(ps)}/{qtd}.**")
 
     @commands.command(name="sessao", aliases=["sessão"])
