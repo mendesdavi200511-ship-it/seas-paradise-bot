@@ -141,10 +141,6 @@ class Finalizacao(commands.Cog):
         await ctx.send(f"🏛️ **ORGANIZAÇÕES DO MUNDO**\n{txt}\n\nSua organização: **{org['nome']} ({org['cargo']})**" if org else f"🏛️ **ORGANIZAÇÕES DO MUNDO**\n{txt}\n\nVocê não pertence a uma organização.")
 
     @commands.command()
-    async def prisao(self,ctx):
-        p=await buscar_prisao(ctx.author.id); await ctx.send(f"⛓️ Preso em **{p['local']}** • {p['motivo']}" if p else '🔓 Você está livre.')
-
-    @commands.command()
     @commands.has_permissions(administrator=True)
     async def prender(self,ctx,membro:discord.Member,local:str,*,motivo='Capturado'):
         await prender(membro.id,local,motivo); await ctx.send(f'⛓️ {membro.mention} foi preso em **{local}**.')
