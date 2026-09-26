@@ -1,5 +1,6 @@
 import os
 import asyncpg
+from datetime import datetime, timezone
 
 
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -2398,6 +2399,10 @@ async def aplicar_impacto_reputacao(
     if procurado:
         recompensa = max(1_000_000, pressao * 250_000)
 
+    # Traição/hostilidade grave contra a própria Marinha não pode deixar a ficha como Marinheiro.
+    if hostil_marinha and g >= 4:
+        await db.execute("UPDATE fichas SET faccao='Independente' WHERE LOWER(nome)=LOWER($1) AND LOWER(faccao) LIKE '%marinha%'", personagem_nome)
+
     return await db.fetchrow(
         """
         UPDATE reputacoes_mundo
@@ -3001,3 +3006,35 @@ async def sincronizar_noticias_recentes(limite=20):
         manchete=f"{tipo} movimenta {local}"[:180]
         await db.execute("""INSERT INTO noticias_mundo(evento_id,personagem_nome,manchete,corpo,alcance) SELECT $1,$2,$3,$4,$5 WHERE NOT EXISTS(SELECT 1 FROM noticias_mundo WHERE evento_id=$1)""",e['id'],e['personagem_nome'],manchete,e['resumo'][:1500],e['alcance'])
     return len(rows)
+
+# =========================================================
+# CONSEQUÊNCIAS MECÂNICAS v68 — prisão / facção / jornal 24h
+# =========================================================
+async def registrar_prisao(user_id, local, motivo, duracao_minutos):
+    db=get_pool(); mins=max(5,min(10080,int(duracao_minutos or 60)))
+    return await db.fetchrow("""
+        INSERT INTO prisoes(user_id,local,motivo,status,preso_em,execucao_em)
+        VALUES($1,$2,$3,'preso',NOW(),NOW()+($4::TEXT||' minutes')::INTERVAL)
+        ON CONFLICT(user_id) DO UPDATE SET local=EXCLUDED.local,motivo=EXCLUDED.motivo,status='preso',preso_em=NOW(),execucao_em=EXCLUDED.execucao_em
+        RETURNING *;""",int(user_id),str(local or 'Custódia local')[:160],str(motivo or 'Detenção')[:500],mins)
+
+async def buscar_prisao_ativa(user_id):
+    db=get_pool()
+    row=await db.fetchrow("SELECT * FROM prisoes WHERE user_id=$1 AND status='preso'",int(user_id))
+    if row and row['execucao_em'] and row['execucao_em']<=datetime.now(timezone.utc):
+        await db.execute("UPDATE prisoes SET status='liberto' WHERE user_id=$1 AND status='preso'",int(user_id))
+        await atualizar_estado_jogador(int(user_id),estado='livre',custodia=None,restricoes=None,combate_ativo=False)
+        return None
+    return row
+
+async def libertar_prisao(user_id):
+    db=get_pool(); await db.execute("UPDATE prisoes SET status='liberto' WHERE user_id=$1 AND status='preso'",int(user_id))
+    return await atualizar_estado_jogador(int(user_id),estado='livre',custodia=None,restricoes=None,combate_ativo=False)
+
+async def expulsar_faccao(user_id, nova_faccao='Independente'):
+    db=get_pool()
+    return await db.fetchrow("UPDATE fichas SET faccao=$2 WHERE user_id=$1 RETURNING *",int(user_id),str(nova_faccao))
+
+async def buscar_edicao_jornal_24h():
+    db=get_pool()
+    return await db.fetch("""SELECT * FROM noticias_mundo WHERE publicado=TRUE AND criado_em>=NOW()-INTERVAL '24 hours' ORDER BY criado_em DESC LIMIT 15""")
