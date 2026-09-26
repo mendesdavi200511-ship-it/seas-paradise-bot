@@ -1499,11 +1499,11 @@ REGRA DE TAMANHO DA RESPOSTA
             #    reagem sem exigir confirmação dos demais jogadores. Quem não falou
             #    apenas permanece na situação anterior; não recebe ação inventada.
             if len(participantes_ciclo)>1:
-                declaradas_antes=await listar_acoes_cena_sessao(sessao["id"],ciclo)
-                if ctx.author.id in {a["user_id"] for a in declaradas_antes}:
-                    await self.aviso(ctx,f"{ctx.author.mention} ⏳ **{ficha['nome']} já declarou a ação deste ciclo.** Aguarde a resolução atual.")
-                    return
-
+                # IMPORTANTE: conflito tem prioridade sobre a trava de "uma ação por ciclo".
+                # Na v63 essa checagem acontecia tarde demais: a sessão podia estar com
+                # conflito_ativo=True e, ainda assim, uma declaração antiga do jogador
+                # bloqueava toda ação seguinte. Em conflito, ciclos servem apenas como
+                # envelopes de persistência; jamais como confirmação/votação de players.
                 conflito_livre = bool(sessao.get("conflito_ativo", False))
                 if not conflito_livre:
                     try:
@@ -1511,8 +1511,26 @@ REGRA DE TAMANHO DA RESPOSTA
                     except Exception as ex:
                         print(f"⚠️ Detector de combate multiplayer: {type(ex).__name__}: {ex}")
 
-                await registrar_acao_cena_sessao(sessao["id"],ciclo,ctx.author.id,ficha["nome"],texto)
-                declaradas=await listar_acoes_cena_sessao(sessao["id"],ciclo)
+                declaradas_antes=await listar_acoes_cena_sessao(sessao["id"],ciclo)
+
+                if conflito_livre:
+                    # Pode existir ação presa no ciclo atual por versões anteriores.
+                    # Não reutilizamos nem esperamos essas declarações: abrimos um ciclo
+                    # limpo para ESTA ação e a resolvemos imediatamente. Assim o jogador
+                    # pode agir quantas vezes a cena exigir sem depender dos demais.
+                    if declaradas_antes:
+                        sessao = await avancar_ciclo_cena_sessao(sessao["id"])
+                        ciclo = sessao["ciclo_cena"]
+                        participantes_ciclo = await listar_participantes_ciclo(sessao["id"],ciclo)
+                    await limpar_deadline_ciclo(sessao["id"])
+                    await registrar_acao_cena_sessao(sessao["id"],ciclo,ctx.author.id,ficha["nome"],texto)
+                    declaradas=await listar_acoes_cena_sessao(sessao["id"],ciclo)
+                else:
+                    if ctx.author.id in {a["user_id"] for a in declaradas_antes}:
+                        await self.aviso(ctx,f"{ctx.author.mention} ⏳ **{ficha['nome']} já declarou a ação deste ciclo.** Aguarde a resolução atual.")
+                        return
+                    await registrar_acao_cena_sessao(sessao["id"],ciclo,ctx.author.id,ficha["nome"],texto)
+                    declaradas=await listar_acoes_cena_sessao(sessao["id"],ciclo)
 
                 # Em luta não existe votação, confirmação ou espera pelos outros.
                 # A própria ação atual dispara a continuação da cena. O resolver recebe
