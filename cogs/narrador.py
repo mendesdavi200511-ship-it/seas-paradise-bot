@@ -53,6 +53,7 @@ from database.database import (
     registrar_acao_combate, listar_acoes_rodada, atualizar_status_combatente,
     avancar_rodada_combate, encerrar_combate_sessao, atualizar_estado_cena_sessao,
     buscar_evento_por_thread, status_participacao_evento, participar_evento_global, buscar_sessao_por_id,
+    registrar_prisao, buscar_prisao_ativa, libertar_prisao, expulsar_faccao, buscar_edicao_jornal_24h,
 )
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -286,9 +287,11 @@ class Narrador(commands.Cog):
             raise RuntimeError("OPENAI_API_KEY não foi configurada no ambiente.")
         self.client = AsyncOpenAI(api_key=OPENAI_API_KEY)
         self.verificar_ciclos_pendentes.start()
+        self.atualizar_jornal_24h.start()
 
     def cog_unload(self):
         self.verificar_ciclos_pendentes.cancel()
+        self.atualizar_jornal_24h.cancel()
 
     async def cog_before_invoke(self, ctx):
         # No canal de RP, comandos operacionais somem sozinhos; !acao é parte do registro narrativo.
@@ -354,6 +357,12 @@ Narre o resultado imediato da situação em 1 a 4 parágrafos curtos. NPCs e amb
                     print(f"⚠️ Encerramento automático sem ações: {type(ex).__name__}: {ex}")
                     texto = "Sem novas ações dos participantes, a situação se estabiliza e a cena chega ao fim por enquanto."
                 texto = re.sub(r"\[[A-Z_]+(?::[^\]]*)?\]", "", texto).strip()
+                # O desfecho automático também gera consequências mecânicas; antes ele só virava prosa.
+                for pp in participantes_ativos:
+                    try:
+                        f=await buscar_ficha(pp['user_id'])
+                        if f: await self.registrar_consequencia_mundial(canal, "Inatividade do jogador; sem nova decisão voluntária.", texto, f, user_id=pp['user_id'])
+                    except Exception as ex: print(f"⚠️ Consequência do desfecho automático: {ex}")
                 for parte in dividir_mensagem(texto,3800):
                     await canal.send(embed=discord.Embed(title="📖 NARRADOR — DESFECHO POR INATIVIDADE",description=parte,color=discord.Color.blue()))
                 resumo = await self.resumo_encerramento_sessao(atual['id'])
@@ -413,6 +422,17 @@ Narre o resultado imediato da situação em 1 a 4 parágrafos curtos. NPCs e amb
 
     @verificar_ciclos_pendentes.before_loop
     async def antes_timeout_ciclos(self):
+        await self.bot.wait_until_ready()
+
+    @tasks.loop(hours=24, reconnect=True)
+    async def atualizar_jornal_24h(self):
+        try:
+            await sincronizar_noticias_recentes(50)
+        except Exception as ex:
+            print(f"⚠️ Atualização Jornal 24h: {type(ex).__name__}: {ex}")
+
+    @atualizar_jornal_24h.before_loop
+    async def antes_jornal_24h(self):
         await self.bot.wait_until_ready()
 
     def localizacao_do_canal(self, ctx):
@@ -1211,6 +1231,9 @@ REPUTAÇÃO DE FACÇÃO:
   a Marinha presente souber do feito. Isso NÃO exige virar jornal nem ajudar civis.
 - Use ajuda_governo/ajuda_piratas da mesma forma para ajuda relevante e confirmada às respectivas facções.
 - Tentativa sem resultado útil não conta como ajuda só porque a intenção era boa.
+- Se um membro de facção comete traição grave/violência deliberada contra a própria facção e isso é confirmado/testemunhado, use expulsar_faccao=true.
+- Se o resultado confirmado terminou com o personagem efetivamente preso/detido sob custódia, use prisao=true e defina pena_minutos proporcional à gravidade: infração leve 15-60; violência/resistência 60-360; crime grave 360-1440; excepcional até 10080. Não marque prisão por mera ameaça de captura.
+- Hostilidade confirmada contra Marinha/Governo deve marcar hostil_marinha/hostil_governo; isso pode gerar relação negativa, procurado e recompensa mecanicamente.
 
 Responda SOMENTE JSON válido, sem markdown, neste formato:
 {{"registrar":true/false,"tipo":"...","resumo":"...","gravidade":1,
@@ -1218,7 +1241,8 @@ Responda SOMENTE JSON válido, sem markdown, neste formato:
 "marinha_sabe":false,"governo_sabe":false,"piratas_sabem":false,"publico_sabe":false,
 "hostil_marinha":false,"hostil_governo":false,"hostil_piratas":false,
 "ajuda_marinha":false,"ajuda_governo":false,"ajuda_piratas":false,"ajuda_publica":false,
-"virou_noticia":false,"manchete":""}}
+"virou_noticia":false,"manchete":"",
+"prisao":false,"pena_minutos":0,"motivo_prisao":"","expulsar_faccao":false}}
 """.strip()
         resposta = await self.client.responses.create(
             model=MODELO_NARRADOR,
@@ -1267,6 +1291,15 @@ Responda SOMENTE JSON válido, sem markdown, neste formato:
             ajuda_governo=dados.get("ajuda_governo", False),
             ajuda_piratas=dados.get("ajuda_piratas", False),
         )
+
+        # Consequências mecânicas derivadas do MESMO fato confirmado.
+        if dados.get("expulsar_faccao") and str(ficha.get("faccao") or "").casefold() != "independente":
+            await expulsar_faccao(uid, "Independente")
+        if dados.get("prisao"):
+            pena = max(5, min(10080, int(dados.get("pena_minutos") or (30 + int(dados.get("gravidade",1))*30))))
+            motivo = str(dados.get("motivo_prisao") or resumo)[:500]
+            await registrar_prisao(uid, localizacao or "Custódia local", motivo, pena)
+            await atualizar_estado_jogador(uid, estado="preso", custodia=localizacao or "Autoridades locais", restricoes=f"Detido por {pena} min", combate_ativo=False)
 
         # Jornal é consequência, não exposição automática de todo evento.
         if dados.get("virou_noticia") and str(dados.get("manchete") or "").strip():
@@ -2135,21 +2168,36 @@ REGRA DE TAMANHO DA RESPOSTA
 
     @commands.command(name="jornal", aliases=["noticias", "notícias"])
     async def jornal(self, ctx):
-        # Antes de montar a edição, materializa fatos públicos recentes que ainda não ganharam matéria.
-        await sincronizar_noticias_recentes(30)
-        noticias = await buscar_noticias_mundo(10)
+        # Uma edição cobre as últimas 24h; fatos públicos são materializados antes da leitura.
+        await sincronizar_noticias_recentes(50)
+        noticias = await buscar_edicao_jornal_24h()
         if not noticias:
-            await ctx.send("📰 Ainda não há notícias relevantes circulando pelo mundo.")
+            await ctx.send("📰 **JORNAL MUNDIAL — EDIÇÃO DAS ÚLTIMAS 24H**\nNenhum acontecimento público relevante foi confirmado neste período.")
             return
-        texto = "\n\n".join(
-            f"**{n['manchete']}**\n{n['corpo']}" for n in noticias
-        )
-        for parte in dividir_mensagem(texto, limite=3800):
-            await ctx.send(embed=discord.Embed(
-                title="📰 JORNAL ECONÔMICO MUNDIAL",
-                description=parte,
-                color=discord.Color.gold()
-            ))
+        blocos=[]
+        for n in noticias:
+            alcance=str(n['alcance'] or 'regional').upper()
+            blocos.append(f"**{n['manchete']}**  •  `{alcance}`\n{n['corpo']}")
+        texto="\n\n━━━━━━━━━━━━━━━━━━\n\n".join(blocos)
+        partes=dividir_mensagem(texto,limite=3600)
+        for i,parte in enumerate(partes,1):
+            e=discord.Embed(title="📰 JORNAL MUNDIAL — EDIÇÃO 24H"+(f" ({i}/{len(partes)})" if len(partes)>1 else ""),description=parte,color=discord.Color.gold())
+            e.set_footer(text="Sea's Paradise • acontecimentos públicos confirmados nas últimas 24 horas")
+            await ctx.send(embed=e)
+
+    @commands.command(name="prisao", aliases=["prisão","pena"])
+    async def prisao(self, ctx):
+        p=await buscar_prisao_ativa(ctx.author.id)
+        if not p:
+            return await ctx.send("🔓 Você não possui prisão ativa.")
+        agora=datetime.now(timezone.utc); fim=p['execucao_em']
+        restante=max(0,int((fim-agora).total_seconds())) if fim else 0
+        h,rem=divmod(restante,3600); m,_=divmod(rem,60)
+        e=discord.Embed(title="🔒 SITUAÇÃO PRISIONAL",color=discord.Color.dark_red())
+        e.add_field(name="📍 Custódia",value=p['local'],inline=False)
+        e.add_field(name="⚖️ Motivo",value=p['motivo'] or 'Não informado',inline=False)
+        e.add_field(name="⏳ Pena restante",value=f"{h}h {m}min",inline=True)
+        await ctx.send(embed=e)
 
 
 

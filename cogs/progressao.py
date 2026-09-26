@@ -142,6 +142,29 @@ Responda SOMENTE JSON válido:
             out[k]=v
         return out
 
+    def _fallback_troca(self, acao, ficha, boss, stats):
+        """Árbitro determinístico de segurança: a luta nunca trava por falha de IA/JSON."""
+        bf=int(boss['boss_forca'] or BOSS_RANKS[boss['rank']]['attr']); br=int(boss['boss_resistencia'] or BOSS_RANKS[boss['rank']]['attr']); bv=int(boss['boss_velocidade'] or BOSS_RANKS[boss['rank']]['attr'])
+        texto=(acao or '').casefold()
+        ofensiva=any(x in texto for x in ('atac','golp','soco','chut','cort','dispar','tiro','perf','espad','sang','acert'))
+        defensiva=any(x in texto for x in ('esquiv','defend','bloque','recu','desvi','curv','step','cobertura'))
+        p_atk=max(stats['forca'],stats['velocidade'] if any(x in texto for x in ('tiro','dispar','rápid','rapido')) else stats['forca'])
+        ratio_atk=p_atk/max(1,br); ratio_boss=bf/max(1,stats['resistencia']); speed=stats['velocidade']/max(1,bv)
+        if not ofensiva: db='nenhum'
+        elif ratio_atk>=1.8: db='grave'
+        elif ratio_atk>=1.15: db='solido'
+        elif ratio_atk>=.70: db='leve'
+        elif ratio_atk>=.40: db='raspao'
+        else: db='nenhum'
+        mitig=(1.35 if defensiva and speed>=.75 else 1.0)
+        rb=ratio_boss/mitig
+        if rb>=2.2: dp='grave'
+        elif rb>=1.3: dp='solido'
+        elif rb>=.75: dp='leve'
+        elif rb>=.40: dp='raspao'
+        else: dp='nenhum'
+        return {'acao_interpretada':acao,'resolucao_player':('A ação encontra uma abertura e produz efeito compatível com a diferença física.' if db!='nenhum' else 'A tentativa é contida pela defesa, distância ou diferença física do Boss.'),'dano_boss':db,'reacao_boss':'O Boss reage imediatamente, preservando a continuidade da troca.','resolucao_boss':('A resposta do Boss alcança o personagem.' if dp!='nenhum' else 'A resposta não consegue impor dano relevante.'),'dano_player':dp,'novo_estado':boss['estado_contexto'] or self._estado_inicial(ficha,boss['boss_nome']),'resumo_turno':'Troca resolvida pelo árbitro mecânico de segurança.'}
+
     def _dano_por_severidade(self,severity,hp_max):
         return max(0,round(int(hp_max)*SEVERITY_FRACTIONS.get(severity,0)))
 
@@ -212,8 +235,8 @@ Responda SOMENTE JSON válido:
             try:
                 out=await self._resolver_troca(acao,ficha,esp,b,stats)
             except Exception as ex:
-                print(f'⚠️ Árbitro Boss falhou: {ex}')
-                return await ctx.send('⚠️ Não consegui resolver esta troca com segurança. **Nada foi alterado na luta.** Tente a ação novamente em alguns segundos.')
+                print(f'⚠️ Árbitro Boss IA falhou; usando fallback mecânico: {type(ex).__name__}: {ex}')
+                out=self._fallback_troca(acao,ficha,b,stats)
             boss_hp=int(b['hp_atual']); player_hp=int(b['player_hp_atual']); boss_dmg=self._dano_por_severidade(out['dano_boss'],b['hp_max']); player_dmg=self._dano_por_severidade(out['dano_player'],b['player_hp_max'])
             boss_hp=max(0,boss_hp-boss_dmg); player_hp=max(0,player_hp-player_dmg)
             resumo=_clip(out.get('resumo_turno') or f"{out.get('resolucao_player','')} {out.get('resolucao_boss','')}",500)
