@@ -2446,8 +2446,13 @@ async def definir_deadline_ciclo(sessao_id, segundos=90):
 async def limpar_deadline_ciclo(sessao_id):
     return await get_pool().execute("UPDATE sessoes_narracao SET ciclo_deadline=NULL WHERE id=$1;", int(sessao_id))
 
-async def listar_ciclos_expirados():
-    return await get_pool().fetch("""SELECT * FROM sessoes_narracao WHERE status='ativa' AND iniciada=TRUE AND ciclo_deadline IS NOT NULL AND ciclo_deadline<=NOW() ORDER BY ciclo_deadline LIMIT 30;""")
+async def listar_ciclos_expirados(sessao_id=None):
+    db = get_pool()
+    if sessao_id is not None:
+        return await db.fetch("""SELECT * FROM sessoes_narracao WHERE id=$1 AND status='ativa' AND iniciada=TRUE
+            AND ciclo_deadline IS NOT NULL AND ciclo_deadline<=NOW() LIMIT 1;""", int(sessao_id))
+    return await db.fetch("""SELECT * FROM sessoes_narracao WHERE status='ativa' AND iniciada=TRUE
+        AND ciclo_deadline IS NOT NULL AND ciclo_deadline<=NOW() ORDER BY ciclo_deadline LIMIT 30;""")
 
 async def registrar_acao_cena_sessao(sessao_id,ciclo,user_id,personagem_nome,acao):
     db=get_pool()
