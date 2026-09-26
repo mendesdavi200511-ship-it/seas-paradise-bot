@@ -118,17 +118,17 @@ TAREFA:
 5. NÃO use HP, barra de vida, pontos de condição nem dano numérico. Ferimentos existem somente como fatos narrativos persistentes no estado (ex.: corte no braço, perna quebrada, inconsciente, morto).
 6. Um tiro, lâmina, impacto ou poder deve ser resolvido pela cadeia causal concreta: alcance, trajetória, reação possível, proteção, natureza do ataque e capacidades relevantes. Rank/status sozinho nunca decide acerto, defesa ou sobrevivência.
 7. Produza NOVO ESTADO concreto para o próximo turno: distância, postura, agarrões, armas em mãos/no chão, cobertura, ferimentos e vantagens. Não apague fatos sem resolvê-los.
-8. Narração curta, natural, sem falar em rolagem, fórmula, IA ou "chance".
+8. A resposta ao jogador deve ser SOMENTE a continuação narrativa da luta, em texto corrido. Não repita, cite, resuma nem reformule a ação que ele acabou de escrever. Comece diretamente pela consequência/reação que vem depois dela.
+9. Não use cabeçalhos, "Turno X", separadores, tópicos, emojis, campos técnicos, explicações de regra ou frases metalinguísticas. Escreva como um narrador de RPG reagindo ao jogador.
+10. A troca precisa ANDAR. Decida concretamente o que acontece com base na causalidade. Não deixe a cena artificialmente "em aberto" só por cautela. Se houver base para acerto, erro, esquiva, bloqueio, ferimento, desarme, queda, incapacidade ou morte, narre isso. Se algo for incerto, escolha a consequência mais coerente com o estado e capacidades.
+11. O Boss deve lutar de verdade: reagir, atacar, pressionar, aproveitar aberturas e sofrer consequências quando cabível. Sem plot armor para nenhum lado.
 
 Responda SOMENTE JSON válido:
 {{
- "acao_interpretada":"o que o player realmente tentou/executou",
- "resolucao_player":"resultado concreto da ação do player",
- "reacao_boss":"ação/reação concreta do Boss após/entre as etapas, se possível",
- "resolucao_boss":"resultado concreto da ação do Boss",
- "novo_estado":"estado físico completo e autoritativo após a troca, incluindo ferimentos narrativos",
+ "narracao":"continuação narrativa pronta para ser enviada ao player; texto corrido, sem repetir a ação declarada",
+ "novo_estado":"estado físico completo e autoritativo após a troca, incluindo distância, postura, armas, ferimentos, incapacidades e vantagens",
  "desfecho":"continua|boss_derrotado|player_derrotado",
- "resumo_turno":"uma frase factual para memória"
+ "resumo_turno":"uma frase factual para memória interna"
 }}'''
         async with AI_LIMIT:
             r=await self.client.responses.create(model='gpt-5.6-luna',input=prompt,max_output_tokens=850)
@@ -138,10 +138,31 @@ Responda SOMENTE JSON válido:
         out['desfecho']=desfecho
         return out
 
-    def _fallback_troca(self, acao, ficha, boss, stats):
-        """Fallback narrativo conservador: preserva a cena sem inventar HP ou vitória automática."""
+    async def _fallback_troca(self, acao, ficha, boss, stats):
+        """Segunda tentativa curta: nunca devolve o manual interno ao jogador."""
         estado=boss['estado_contexto'] or self._estado_inicial(ficha,boss['boss_nome'])
-        return {'acao_interpretada':acao,'resolucao_player':'A ação é executada até o ponto que o estado atual permite, sem presumir automaticamente o resultado pretendido.','reacao_boss':'O Boss reage a partir da posição e das condições já estabelecidas na cena.','resolucao_boss':'A troca permanece aberta; nenhum desfecho irreversível é imposto sem base causal suficiente.','novo_estado':estado,'desfecho':'continua','resumo_turno':'A troca continuou sem desfecho automático por falta de resolução segura.'}
+        prompt=f'''Continue esta luta de RPG em UMA resposta narrativa curta e concreta.
+
+Player: {ficha['nome']}
+Boss: {boss['boss_nome']} — {boss['boss_estilo'] or 'combatente'}
+Estado atual: {estado}
+Ação declarada pelo player: {acao}
+
+Resolva a consequência pela lógica física da cena. O Boss pode reagir e contra-atacar. Não use HP. Não use rank/status como sentença automática. Não repita a ação do player. Não explique regras. Não use cabeçalho, tópicos ou emojis. Faça a luta avançar e termine em um ponto que permita a próxima ação, salvo derrota/morte/incapacitação coerente.
+
+Responda SOMENTE JSON válido:
+{{"narracao":"texto corrido para o jogador","novo_estado":"estado físico completo depois da troca","desfecho":"continua|boss_derrotado|player_derrotado","resumo_turno":"memória factual curta"}}'''
+        try:
+            async with AI_LIMIT:
+                r=await self.client.responses.create(model='gpt-5.6-luna',input=prompt,max_output_tokens=650)
+            out=_clean_json(r.output_text)
+            if out.get('narracao'):
+                d=str(out.get('desfecho','continua')).casefold().strip()
+                out['desfecho']=d if d in ('continua','boss_derrotado','player_derrotado') else 'continua'
+                return out
+        except Exception as ex:
+            print(f'⚠️ Fallback narrativo Boss falhou: {type(ex).__name__}: {ex}')
+        return {'narracao':'O confronto não pôde ser resolvido neste instante. Tente a ação novamente em alguns segundos.','novo_estado':estado,'desfecho':'continua','resumo_turno':'Nenhuma alteração foi aplicada porque a resolução falhou.'}
 
     def _dano_por_severidade(self,severity,hp_max):
         return max(0,round(int(hp_max)*SEVERITY_FRACTIONS.get(severity,0)))
@@ -214,15 +235,15 @@ Responda SOMENTE JSON válido:
                 out=await self._resolver_troca(acao,ficha,esp,b,stats)
             except Exception as ex:
                 print(f'⚠️ Árbitro Boss IA falhou; usando fallback mecânico: {type(ex).__name__}: {ex}')
-                out=self._fallback_troca(acao,ficha,b,stats)
-            resumo=_clip(out.get('resumo_turno') or f"{out.get('resolucao_player','')} {out.get('resolucao_boss','')}",500)
+                out=await self._fallback_troca(acao,ficha,b,stats)
+            resumo=_clip(out.get('resumo_turno') or out.get('narracao',''),500)
             hist=_clip((b['historico_contexto'] or '')+f"\nT{b['turno']}: {resumo}",1800)
             novo=_clip(out.get('novo_estado') or b['estado_contexto'],1400)
             await get_pool().execute('UPDATE bosses_rp_ativos SET turno=turno+1,estado_contexto=$2,historico_contexto=$3 WHERE id=$1',b['id'],novo,hist)
-            lines=[f'⚔️ **Turno {b["turno"]} — {ficha["nome"]} vs. {b["boss_nome"]}**',f'🗣️ *{out.get("acao_interpretada",acao)}*',f'\n🎬 {out.get("resolucao_player","A ação é resolvida.")}']
-            if out.get('reacao_boss'):lines.append(f'\n👹 *{out["reacao_boss"]}*')
-            if out.get('resolucao_boss'):lines.append(f'🎬 {out["resolucao_boss"]}')
-            await ctx.send('\n'.join(lines))
+            narracao=(out.get('narracao') or '').strip()
+            if not narracao:
+                narracao='O confronto não pôde ser resolvido neste instante. Tente a ação novamente em alguns segundos.'
+            await ctx.send(narracao)
             desfecho=out.get('desfecho','continua')
             if desfecho=='boss_derrotado':
                 await get_pool().execute("UPDATE bosses_rp_ativos SET hp_atual=0 WHERE id=$1",b['id'])
