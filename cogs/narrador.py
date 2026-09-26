@@ -48,7 +48,7 @@ from database.database import (
     encerrar_sessao_narracao,
     buscar_reputacao_mundo, aplicar_impacto_reputacao, registrar_noticia_mundo, buscar_noticias_mundo, sincronizar_noticias_recentes,
     configurar_sessao_narracao, marcar_sessao_iniciada,
-    registrar_acao_cena_sessao, listar_acoes_cena_sessao, avancar_ciclo_cena_sessao, definir_deadline_ciclo, limpar_deadline_ciclo, listar_ciclos_expirados,
+    registrar_acao_cena_sessao, listar_acoes_cena_sessao, avancar_ciclo_cena_sessao, definir_deadline_ciclo, limpar_deadline_ciclo, reparar_deadlines_ciclos, reparar_deadline_sessao, listar_ciclos_expirados,
     buscar_combate_ativo, iniciar_combate_sessao, entrar_combate, listar_combatentes,
     registrar_acao_combate, listar_acoes_rodada, atualizar_status_combatente,
     avancar_rodada_combate, encerrar_combate_sessao, atualizar_estado_cena_sessao,
@@ -377,24 +377,31 @@ Narre o resultado imediato da situação em 1 a 4 parágrafos curtos. NPCs e amb
                 def __init__(self,ch): self.channel=ch; self.guild=getattr(ch,'guild',None); self.bot=None
                 async def send(self,*a,**kw): return await self.channel.send(*a,**kw)
                 def typing(self): return self.channel.typing()
-            await self.resolver_cena_multiplayer(CtxTimeout(canal), atual, acoes, timeout=True)
-            # Quem não respondeu em 5 min deixa de bloquear a cena. Não é movido,
-            # morto nem controlado pela IA; pode voltar com !entrar.
-            for p in ausentes:
-                await marcar_participante_sessao(atual['id'], p['user_id'], 'ausente')
+            # Primeiro avisa claramente quem perdeu os 5 minutos. A resolução vem logo
+            # em seguida, usando apenas as ações realmente recebidas.
             if ausentes:
                 mencoes = ' '.join(f"<@{p['user_id']}>" for p in ausentes)
+                nomes = ', '.join(p['personagem_nome'] for p in ausentes)
                 await canal.send(
-                    f"{mencoes} 💤 **Tempo de ação esgotado.** A cena continuou com quem agiu. "
-                    "Você saiu da participação ativa para não prender os demais; quando voltar, use `!entrar`.",
+                    f"{mencoes} 💤 **5 minutos de inatividade.** **{nomes}** saiu da participação ativa. "
+                    "A cena vai continuar agora com quem respondeu; use `!entrar` para voltar depois.",
                     delete_after=120
                 )
+            await self.resolver_cena_multiplayer(CtxTimeout(canal), atual, acoes, timeout=True)
+            # Só depois da resolução persistimos a ausência, para o Narrador ainda receber
+            # o contexto de quem estava no ciclo sem inventar uma ação para essa pessoa.
+            for p in ausentes:
+                await marcar_participante_sessao(atual['id'], p['user_id'], 'ausente')
             return True
 
     @tasks.loop(seconds=10, reconnect=True)
     async def verificar_ciclos_pendentes(self):
         # O watchdog nunca deve morrer por uma falha pontual de banco/Discord/IA.
         try:
+            # Deploy/restart não pode apagar o relógio lógico de um ciclo já respondido.
+            # Se houver ação no ciclo atual e deadline NULL, reconstruímos a partir da
+            # ÚLTIMA resposta (+300s). Se já passou, entra imediatamente em expirados.
+            await reparar_deadlines_ciclos()
             expirados = await listar_ciclos_expirados()
             for sessao in expirados:
                 try:
@@ -1501,8 +1508,15 @@ REGRA DE TAMANHO DA RESPOSTA
             if not sessao:
                 await ctx.send("🎬 Não há narração ativa. Use `!iniciar`: o bot perguntará quantos jogadores participarão.")
                 return
-            # Rede de segurança: se o watchdog perdeu um ciclo (rede/redeploy), a próxima
-            # interação no canal força a resolução vencida antes de aceitar nova ação.
+            # Rede de segurança: deploy/restart pode encontrar uma ação persistida de uma
+            # versão anterior sem deadline. Reconstrói o relógio pela última resposta antes
+            # de decidir se a ação atual pertence ao mesmo ciclo.
+            if not sessao['ciclo_deadline']:
+                reparada = await reparar_deadline_sessao(sessao['id'])
+                if reparada:
+                    sessao = reparada
+            # Se o watchdog perdeu um ciclo (rede/redeploy), a próxima interação no canal
+            # força a resolução vencida ANTES da trava de "já declarou".
             if sessao['ciclo_deadline']:
                 expirados = {int(x['id']) for x in await listar_ciclos_expirados()}
                 if int(sessao['id']) in expirados:
@@ -1513,12 +1527,13 @@ REGRA DE TAMANHO DA RESPOSTA
                         participantes_vencidos = await listar_participantes_ciclo(sessao['id'], ciclo_vencido)
                         ids_vencidos = {int(a['user_id']) for a in acoes_vencidas}
                         ausentes_vencidos = [p for p in participantes_vencidos if int(p['user_id']) not in ids_vencidos]
+                        if ausentes_vencidos:
+                            mencoes = ' '.join(f"<@{p['user_id']}>" for p in ausentes_vencidos)
+                            nomes = ', '.join(p['personagem_nome'] for p in ausentes_vencidos)
+                            await ctx.send(f"{mencoes} 💤 **5 minutos de inatividade.** **{nomes}** saiu da participação ativa. A cena continua agora com quem respondeu; use `!entrar` para voltar depois.", delete_after=120)
                         await self.resolver_cena_multiplayer(ctx, sessao, acoes_vencidas, timeout=True)
                         for p in ausentes_vencidos:
                             await marcar_participante_sessao(sessao['id'], p['user_id'], 'ausente')
-                        if ausentes_vencidos:
-                            mencoes = ' '.join(f"<@{p['user_id']}>" for p in ausentes_vencidos)
-                            await ctx.send(f"{mencoes} 💤 **Tempo de ação esgotado.** A cena continuou sem travar os demais. Use `!entrar` para voltar.", delete_after=120)
                         sessao = await buscar_sessao_ativa(ctx.channel.id)
                         if not sessao:
                             return
