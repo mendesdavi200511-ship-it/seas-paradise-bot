@@ -74,9 +74,8 @@ class Mundo(commands.Cog):
         self.bot=bot; self.client=AsyncOpenAI(api_key=os.getenv('OPENAI_API_KEY')) if os.getenv('OPENAI_API_KEY') else None
         bot.add_check(self.estado_global_check)
         self.relogio_mundo.start()
-        self.relogio_akuma.start()
     def cog_unload(self):
-        self.relogio_mundo.cancel(); self.relogio_akuma.cancel(); self.bot.remove_check(self.estado_global_check)
+        self.relogio_mundo.cancel(); self.bot.remove_check(self.estado_global_check)
 
     async def estado_global_check(self,ctx):
         if not ctx.command:return True
@@ -464,6 +463,9 @@ class Mundo(commands.Cog):
             await self.gerar_diario()
         except Exception as e: print('❌ relógio mundo/diário:',type(e).__name__,e)
         try:
+            await self.processar_akuma_spawns()
+        except Exception as e: print('❌ relógio mundo/Akuma:',type(e).__name__,e)
+        try:
             for e in await eventos_para_finalizar(): await self.aplicar_recompensa(e)
             # Caçadores persistentes: reputação alta passa a gerar perseguição sem intervenção de staff.
             for alvo in await candidatos_cacada():
@@ -478,18 +480,5 @@ class Mundo(commands.Cog):
         for sp in await listar_akuma_spawns_ativos():
             try: self.bot.add_view(AkumaSpawnView(self,sp['id']))
             except Exception: pass
-
-    @tasks.loop(seconds=30)
-    async def relogio_akuma(self):
-        # Relógio próprio: geração de mural, recompensas ou caçadas nunca podem
-        # atrasar/matar os drops espontâneos de Akuma no Mi.
-        try:
-            await self.processar_akuma_spawns()
-        except Exception as e:
-            print('❌ relógio Akuma independente:',type(e).__name__,e)
-
-    @relogio_akuma.before_loop
-    async def antes_akuma(self):
-        await self.bot.wait_until_ready()
 
 async def setup(bot): await bot.add_cog(Mundo(bot))
