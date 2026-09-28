@@ -4,6 +4,23 @@ import discord
 
 from discord.ext import commands
 
+# =========================================================
+# IDENTIDADE VISUAL GLOBAL — SEA'S PARADISE
+# Todo embed do bot usa a faixa lateral dourada/amarela do RP.
+# A subclasse preserva a API de discord.Embed e apenas normaliza a cor.
+# =========================================================
+
+_ORIGINAL_DISCORD_EMBED = discord.Embed
+COR_RP_GLOBAL = discord.Color.from_rgb(245, 190, 35)
+
+class SeasParadiseEmbed(_ORIGINAL_DISCORD_EMBED):
+    def __init__(self, *args, **kwargs):
+        kwargs.pop("colour", None)
+        kwargs["color"] = COR_RP_GLOBAL
+        super().__init__(*args, **kwargs)
+
+discord.Embed = SeasParadiseEmbed
+
 from database.database import (
     conectar_banco,
     fechar_banco
