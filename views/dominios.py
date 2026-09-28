@@ -3,6 +3,7 @@ import discord
 from data.profissoes import PROFISSOES
 from data.classes import CLASSES
 from data.skills import ESTILOS
+from data.poderes import skills_akuma
 
 
 # =========================================================
@@ -91,6 +92,9 @@ def progressao_dominio(tipo, nome, porcentagem):
     elif tipo=="classe":
         esp=CLASSES.get(nome,{}).get("especialidade","")
         norm=[(25,"⚪","Fundamentos",esp),(50,"🔵","Especialização",esp),(75,"🟣","Domínio Avançado",esp),(100,"🟡","Maestria",esp)]
+    elif tipo in ("akuma", "akuma no mi"):
+        _tipo, skills = skills_akuma(nome)
+        norm=[(req,"🍈",titulo,desc) for req,titulo,desc in skills]
     else:
         return ""
     linhas=[]
