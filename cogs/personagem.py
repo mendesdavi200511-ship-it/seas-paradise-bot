@@ -40,6 +40,9 @@ from data.sistema import atributo_efetivo, rank_por_reputacao, proximo_rank, TAL
 from data.skills import ESTILOS
 from data.poderes import HAKIS, AKUMA_TIPOS, inferir_tipo, skills_akuma
 
+SEM_PERSONAGEM_ROLE_ID = 1542161193358074026
+COM_PERSONAGEM_ROLE_ID = 1542161144691564666
+
 
 
 
@@ -899,6 +902,18 @@ async def confirmar_criacao(
     personagem = await buscar_ficha(
         user_id
     )
+
+    # Ficha concluída: troca o estado visual do membro no Discord.
+    if interaction.guild and isinstance(interaction.user, discord.Member):
+        sem=interaction.guild.get_role(SEM_PERSONAGEM_ROLE_ID)
+        com=interaction.guild.get_role(COM_PERSONAGEM_ROLE_ID)
+        try:
+            if sem and sem in interaction.user.roles:
+                await interaction.user.remove_roles(sem, reason="Sea's Paradise — personagem criado")
+            if com and com not in interaction.user.roles:
+                await interaction.user.add_roles(com, reason="Sea's Paradise — personagem criado")
+        except discord.Forbidden:
+            print(f"⚠️ Sem permissão para trocar cargos de ficha de {interaction.user.id}")
 
     criando.pop(
         user_id,
@@ -1801,6 +1816,18 @@ class Personagem(
                     await remover_topico_personagem(membro.id); thread_apagada=True
                 except (discord.Forbidden,discord.HTTPException) as erro:
                     print("❌ ERRO AO APAGAR TÓPICO DA FICHA:",type(erro).__name__,erro)
+
+        # Ficha resetada: volta ao estado "sem personagem".
+        if guild is not None:
+            sem=guild.get_role(SEM_PERSONAGEM_ROLE_ID)
+            com=guild.get_role(COM_PERSONAGEM_ROLE_ID)
+            try:
+                if com and com in membro.roles:
+                    await membro.remove_roles(com, reason="Sea's Paradise — ficha resetada")
+                if sem and sem not in membro.roles:
+                    await membro.add_roles(sem, reason="Sea's Paradise — ficha resetada")
+            except discord.Forbidden:
+                print(f"⚠️ Sem permissão para trocar cargos após reset de {membro.id}")
 
         mensagem = (
             f"🗑️ Ficha de {membro.mention} resetada."

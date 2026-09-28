@@ -14,7 +14,9 @@ CRIAR_ID = 1551379201939218502
 FICHAS_ID = 1554178079725981869
 MESTRE_ROLE_ID = 1541858353196695632
 AUTO_ROLES = [1542161384039776366,1542161683739574392,1542161421402644580,1542161536016064544,1542161469817491498,1542161789960192101,1542161738517192796,1541858736241647787,1542161091227029516,1542161193358074026,1542161337667289119]
-WELCOME_GIF = 'https://tenor.com/bGup1.gif'
+WELCOME_GIF = None
+SEM_PERSONAGEM_ROLE_ID = 1542161193358074026
+COM_PERSONAGEM_ROLE_ID = 1542161144691564666
 
 NPC_MASTER_COMMANDS = {'npclocal','npcatributos','limparcena','npcregistrar','npcmemoria','npcrecrutar'}
 WORLD_MASTER_COMMANDS = {'localplayer'}
@@ -154,9 +156,19 @@ class Servidor(commands.Cog):
             except discord.Forbidden: pass
         ch=await _canal(self.bot,BOAS_VINDAS_ID)
         if ch:
-            e=discord.Embed(title="🏴‍☠️ BEM-VINDO AO SEA'S PARADISE!",description=f'{member.mention} acaba de chegar aos mares.\n\nLeia as regras, prepare seu personagem e comece sua jornada!')
-            e.set_footer(text=f'Membro #{member.guild.member_count}')
-            e.set_image(url=WELCOME_GIF)
+            e=discord.Embed(
+                title="☠️ UMA NOVA LENDA CHEGOU AOS MARES!",
+                description=(f"🌊 **{member.mention}, bem-vindo ao Sea's Paradise!**\n\n"
+                             "O mar está cheio de ilhas, tesouros, perigos e histórias que ainda não foram escritas. "
+                             "Monte seu personagem, escolha seu caminho e faça o mundo lembrar do seu nome.\n\n"
+                             "🏴‍☠️ **Pirata?** Persiga liberdade e glória.\n"
+                             "⚓ **Marinha?** Imponha sua justiça.\n"
+                             "🔥 **Revolucionário?** Desafie a ordem do mundo.\n"
+                             "🎯 Ou construa sua própria lenda.\n\n"
+                             "📜 Leia as regras e siga para a criação do personagem. **A aventura começa agora.**"),
+                color=discord.Color.gold())
+            e.set_thumbnail(url=member.display_avatar.url)
+            e.set_footer(text=f"Sea's Paradise • Tripulante #{member.guild.member_count}")
             await ch.send(embed=e)
 
     @commands.Cog.listener()
@@ -210,16 +222,51 @@ class Servidor(commands.Cog):
         except Exception as erro:
             print(f"❌ ERRO PAINEL NPC — {type(erro).__name__}: {erro}")
             return await ctx.send('⚠️ Não consegui consultar os NPCs persistentes agora. O erro foi registrado no console.')
-        e=discord.Embed(title='🎭 CONTROLE DE NPCs',description='NPCs persistentes conhecidos pelo mundo.', color=discord.Color.dark_teal())
+        e=discord.Embed(title='🎭 CONTROLE DE NPCs',description='NPCs persistentes conhecidos pelo mundo.', color=0x11806A)
         linhas=[]
         for x in rows[:30]:
-            nome=x['nome'] if 'nome' in x else 'NPC'
-            local=(x['localizacao'] if 'localizacao' in x else None) or 'local desconhecido'
-            status=(x['status'] if 'status' in x else None) or 'desconhecido'
+            d=dict(x)
+            nome=d.get('nome') or 'NPC'
+            local=d.get('localizacao') or 'local desconhecido'
+            status=d.get('status') or 'desconhecido'
             linhas.append(f"• **{nome}** — {local} • {status}")
         e.add_field(name='NPCs',value='\n'.join(linhas)[:4000] or 'Nenhum NPC persistente registrado.',inline=False)
         e.set_footer(text="Sea's Paradise • Mestragem")
         await ctx.send(embed=e)
+
+    @commands.command(name='lock')
+    async def lock(self, ctx):
+        if not mestre_ou_admin(ctx.author):
+            return await ctx.send('❌ Apenas Administradores e Mestres podem trancar canais.', delete_after=8)
+        try:
+            if isinstance(ctx.channel, discord.Thread):
+                await ctx.channel.edit(locked=True, reason=f'!lock por {ctx.author}')
+            else:
+                overwrite=ctx.channel.overwrites_for(ctx.guild.default_role)
+                overwrite.send_messages=False
+                await ctx.channel.set_permissions(ctx.guild.default_role, overwrite=overwrite, reason=f'!lock por {ctx.author}')
+                mestre=ctx.guild.get_role(MESTRE_ROLE_ID)
+                if mestre:
+                    ow=ctx.channel.overwrites_for(mestre); ow.send_messages=True
+                    await ctx.channel.set_permissions(mestre, overwrite=ow, reason='Mestres mantêm fala em canal trancado')
+            try: await ctx.message.delete()
+            except (discord.Forbidden,discord.NotFound): pass
+            await ctx.send('🔒 **Canal trancado.** Apenas Mestres e Administradores podem falar aqui.')
+        except discord.Forbidden:
+            await ctx.send('❌ O bot não possui permissão para trancar este canal.')
+
+    @commands.command(name='clear')
+    async def clear(self, ctx, quantidade: int):
+        if not mestre_ou_admin(ctx.author):
+            return await ctx.send('❌ Apenas Administradores e Mestres podem limpar mensagens.', delete_after=8)
+        if quantidade < 1 or quantidade > 1000:
+            return await ctx.send('❌ Informe uma quantidade entre **1 e 1000**. Ex.: `!clear 500`.', delete_after=8)
+        try:
+            apagadas=await ctx.channel.purge(limit=quantidade + 1, reason=f'!clear por {ctx.author}')
+            aviso=await ctx.send(f'🧹 **{max(0,len(apagadas)-1)} mensagens removidas.**')
+            await aviso.delete(delay=4)
+        except discord.Forbidden:
+            await ctx.send('❌ O bot não possui permissão para apagar mensagens aqui.', delete_after=8)
 
 async def setup(bot):
     await bot.add_cog(Servidor(bot))
