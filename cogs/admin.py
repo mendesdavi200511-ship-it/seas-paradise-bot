@@ -1,5 +1,6 @@
 import discord
 from discord.ext import commands
+from cogs.servidor import mestre_ou_admin
 
 from database.database import (
     possui_ficha,
@@ -32,6 +33,15 @@ CATEGORIAS_CATALOGO = {
     "profissao": PROFISSOES,
     "haki": HAKIS,
 }
+
+AVISOS_PLAYER_ID = 1554178106330316840
+
+async def avisar_player_admin(interaction, membro, resumo):
+    canal = interaction.client.get_channel(AVISOS_PLAYER_ID)
+    if canal is None:
+        try: canal = await interaction.client.fetch_channel(AVISOS_PLAYER_ID)
+        except Exception: return
+    await canal.send(f"{membro.mention} • 🛠️ **Sua ficha foi atualizada pela Mestragem.**\n{resumo}")
 
 LIMITES_PADRAO = {
     "classe": 100,
@@ -262,6 +272,8 @@ class PontosAtributoModal(
             quantidade
         )
 
+        await avisar_player_admin(interaction, self.membro, f"✨ +{formatar_numero(quantidade)} pontos de atributo.")
+
         await interaction.response.send_message(
             f"✨ **{formatar_numero(quantidade)} pontos** "
             f"de atributo adicionados para "
@@ -317,6 +329,8 @@ class PontosPercentuaisModal(
             self.membro.id,
             quantidade
         )
+
+        await avisar_player_admin(interaction, self.membro, f"📈 +{formatar_numero(quantidade)}% de domínio livre.")
 
         await interaction.response.send_message(
             f"📈 **{formatar_numero(quantidade)}%** "
@@ -379,6 +393,8 @@ async def desbloquear_item(
         return
 
     limite_texto = "∞" if limite is None else f"{limite}%"
+
+    await avisar_player_admin(interaction, membro, f"✅ **{nome}** foi adicionado à sua ficha.")
 
     await interaction.followup.send(
         f"✅ **{nome}** desbloqueado para "
@@ -776,13 +792,14 @@ class RemoverEspecializacaoSelect(discord.ui.Select):
     async def callback(self, interaction):
         categoria,nome=self.values[0].split("|",1)
         resultado=await remover_especializacao(self.membro.id,categoria,nome)
+        if resultado != "DELETE 0": await avisar_player_admin(interaction,self.membro,f"🗑️ **{nome}** foi removido da sua ficha.")
         await interaction.response.send_message((f"🗑️ **{nome}** removido de {self.membro.mention}." if resultado != "DELETE 0" else "❌ Especialização não encontrada."), ephemeral=True)
 
 class RemoverEspecializacaoView(discord.ui.View):
     def __init__(self,dono_id,membro,especializacoes):
         super().__init__(timeout=300); self.dono_id=dono_id; self.add_item(RemoverEspecializacaoSelect(membro,especializacoes))
     async def interaction_check(self,interaction):
-        if interaction.user.id != self.dono_id or not interaction.user.guild_permissions.administrator:
+        if interaction.user.id != self.dono_id:
             await interaction.response.send_message("❌ Apenas o administrador deste painel pode usar esta seleção.",ephemeral=True); return False
         return True
 
@@ -795,13 +812,14 @@ class RankSelect(discord.ui.Select):
         super().__init__(placeholder="Defina o Rank do jogador",options=opts[:25])
     async def callback(self,interaction):
         valor=self.values[0]; await definir_rank_manual(self.membro.id, None if valor=="__auto__" else valor)
+        await avisar_player_admin(interaction,self.membro,f"🏆 Rank definido como **{'Automático' if valor=='__auto__' else valor}**.")
         await interaction.response.send_message(f"🏆 Rank de {self.membro.mention}: **{'Automático' if valor=='__auto__' else valor}**",ephemeral=True)
 
 class RankAdminView(discord.ui.View):
     def __init__(self,dono_id,membro):
         super().__init__(timeout=300); self.dono_id=dono_id; self.add_item(RankSelect(membro))
     async def interaction_check(self,interaction):
-        if interaction.user.id != self.dono_id or not interaction.user.guild_permissions.administrator:
+        if interaction.user.id != self.dono_id:
             await interaction.response.send_message("❌ Sem permissão.",ephemeral=True); return False
         return True
 
@@ -861,6 +879,8 @@ class BerriesModal(
             if quantidade >= 0
             else ""
         )
+
+        await avisar_player_admin(interaction, self.membro, f"💰 Alteração de Berries: {sinal}{formatar_numero(quantidade)}.")
 
         await interaction.response.send_message(
             f"💰 Berries de "
@@ -926,6 +946,8 @@ class ReputacaoModal(
             if quantidade >= 0
             else ""
         )
+
+        await avisar_player_admin(interaction, self.membro, f"⭐ Alteração de reputação: {sinal}{formatar_numero(quantidade)}.")
 
         await interaction.response.send_message(
             f"⭐ Reputação de "
@@ -1175,13 +1197,14 @@ class OrganizacaoAdminSelect(discord.ui.Select):
     async def callback(self,interaction):
         oid=int(self.values[0]); await definir_organizacao_admin(oid,self.membro.id)
         rows=await listar_organizacoes(); org=next((x for x in rows if int(x['id'])==oid),None)
+        await avisar_player_admin(interaction,self.membro,f"🏛️ Organização definida como **{org['nome']}**.")
         await interaction.response.send_message(f"🏛️ {self.membro.mention} foi definido em **{org['nome']}**.",ephemeral=True)
 
 class OrganizacaoAdminView(discord.ui.View):
     def __init__(self,dono_id,membro,rows):
         super().__init__(timeout=300); self.dono_id=dono_id; self.add_item(OrganizacaoAdminSelect(membro,rows))
     async def interaction_check(self,interaction):
-        if interaction.user.id!=self.dono_id or not interaction.user.guild_permissions.administrator:
+        if interaction.user.id!=self.dono_id:
             await interaction.response.send_message('❌ Sem permissão.',ephemeral=True); return False
         return True
 
@@ -1383,9 +1406,7 @@ class Admin(
         self.bot = bot
 
     @commands.command()
-    @commands.has_permissions(
-        administrator=True
-    )
+    @commands.check(lambda ctx: mestre_ou_admin(ctx.author))
     async def admin(
         self,
         ctx,

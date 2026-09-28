@@ -78,6 +78,7 @@ TIMEOUT_PAINEL = 300
 
 
 CANAL_CRIACAO_ID = 1551379201939218502
+CANAL_FICHAS_ID = 1554178079725981869
 
 
 # =========================================================
@@ -1329,7 +1330,7 @@ class Personagem(
         if not isinstance(ctx.channel, discord.Thread):
             return False
 
-        if ctx.channel.parent_id != CANAL_CRIACAO_ID:
+        if ctx.channel.parent_id != CANAL_FICHAS_ID:
             return False
 
         marcador = f"sp-{ctx.author.id}"
@@ -1343,7 +1344,7 @@ class Personagem(
 
         aviso = await ctx.send(
             f"❌ Este comando só pode ser usado no seu tópico em "
-            f"<#{CANAL_CRIACAO_ID}>."
+            f"<#{CANAL_FICHAS_ID}>."
         )
 
         try:
@@ -1369,17 +1370,10 @@ class Personagem(
         ctx
     ):
 
-        # O !criar só pode ser iniciado no canal oficial
-        # ou dentro de uma thread pertencente a ele.
-        eh_thread_criacao = (
-            isinstance(ctx.channel, discord.Thread)
-            and ctx.channel.parent_id == CANAL_CRIACAO_ID
-        )
+        # !criar é exclusivo do canal oficial de criação.
+        eh_thread_criacao = False
 
-        if (
-            ctx.channel.id != CANAL_CRIACAO_ID
-            and not eh_thread_criacao
-        ):
+        if ctx.channel.id != CANAL_CRIACAO_ID:
             aviso = await ctx.send(
                 f"❌ Use `!criar` em <#{CANAL_CRIACAO_ID}>."
             )
@@ -1421,14 +1415,12 @@ class Personagem(
         if guild is None:
             return
 
-        canal = guild.get_channel(
-            CANAL_CRIACAO_ID
-        )
-
+        canal = guild.get_channel(CANAL_FICHAS_ID)
         if canal is None:
-            await ctx.send(
-                "❌ O canal oficial de criação não foi encontrado."
-            )
+            try: canal = await guild.fetch_channel(CANAL_FICHAS_ID)
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException): canal = None
+        if canal is None:
+            await ctx.send("❌ O canal de fichas/tópicos não foi encontrado.")
             return
 
         thread = None
@@ -1466,15 +1458,21 @@ class Personagem(
             )
 
             try:
-                thread = await canal.create_thread(
-                    name=nome_thread[:100],
-                    type=discord.ChannelType.public_thread,
-                    auto_archive_duration=1440,
-                    reason=(
-                        "Sea's Paradise — criação de personagem "
-                        f"de {ctx.author}"
+                if isinstance(canal, discord.ForumChannel):
+                    criado = await canal.create_thread(
+                        name=nome_thread[:100],
+                        content=f"{ctx.author.mention} • sua ficha e edições ficam neste tópico.",
+                        auto_archive_duration=1440,
+                        reason=f"Sea's Paradise — ficha de {ctx.author}"
                     )
-                )
+                    thread = criado.thread
+                else:
+                    thread = await canal.create_thread(
+                        name=nome_thread[:100],
+                        type=discord.ChannelType.public_thread,
+                        auto_archive_duration=1440,
+                        reason=f"Sea's Paradise — ficha de {ctx.author}"
+                    )
 
             except discord.Forbidden:
                 await ctx.send(
@@ -1834,7 +1832,7 @@ class Personagem(
             # já temos a referência mais confiável possível.
             if (
                 isinstance(ctx.channel, discord.Thread)
-                and ctx.channel.parent_id == CANAL_CRIACAO_ID
+                and ctx.channel.parent_id == CANAL_FICHAS_ID
                 and marcador in ctx.channel.name
             ):
                 thread = ctx.channel
@@ -1843,17 +1841,17 @@ class Personagem(
             if thread is None:
                 for candidata in guild.threads:
                     if (
-                        candidata.parent_id == CANAL_CRIACAO_ID
+                        candidata.parent_id == CANAL_FICHAS_ID
                         and marcador in candidata.name
                     ):
                         thread = candidata
                         break
 
             # 3) Procura no canal oficial, inclusive arquivadas.
-            canal = guild.get_channel(CANAL_CRIACAO_ID)
+            canal = guild.get_channel(CANAL_FICHAS_ID)
             if canal is None:
                 try:
-                    canal = await guild.fetch_channel(CANAL_CRIACAO_ID)
+                    canal = await guild.fetch_channel(CANAL_FICHAS_ID)
                 except (
                     discord.Forbidden,
                     discord.NotFound,

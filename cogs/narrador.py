@@ -4,7 +4,8 @@ import json
 import re
 from datetime import datetime, timezone, timedelta
 import discord
-from discord.ext import commands, tasks
+from discord.ext import commands
+from cogs.servidor import mestre_ou_admin, tasks
 from openai import AsyncOpenAI
 
 from database.database import buscar_viagem_ativa, buscar_treinamento_ativo, listar_subordinados, evento_ativo_usuario, forma_ativa
@@ -439,7 +440,8 @@ Narre o resultado imediato da situação em 1 a 4 parágrafos curtos. NPCs e amb
         await self.bot.wait_until_ready()
 
     def localizacao_do_canal(self, ctx):
-        nome = getattr(ctx.channel, "name", None)
+        canal_base = ctx.channel.parent if isinstance(ctx.channel, discord.Thread) and ctx.channel.parent else ctx.channel
+        nome = getattr(canal_base, "name", None)
         if not nome:
             return None
 
@@ -1845,34 +1847,48 @@ REGRA DE TAMANHO DA RESPOSTA
     async def iniciar_narracao(self, ctx):
         treino=await buscar_treinamento_ativo(ctx.author.id)
         if treino:
-            restante=max(treino['fim_em']-datetime.now(timezone.utc), timedelta(0))
-            minutos=max(0,int(restante.total_seconds()//60))
-            return await ctx.send(f"🏋️ **PERSONAGEM EM TREINAMENTO**\nVocê está treinando **{treino['alvo']}** e não pode iniciar uma cena.\n⏳ Restam aproximadamente **{minutos//60}h {minutos%60}min**.\nUse `!cancelartreino` para abandonar o treino sem receber recompensa.")
-        if await buscar_sessao_ativa(ctx.channel.id):
-            await ctx.send("🎬 Já existe narração ativa aqui. Use `!sessao` ou `!encerrar`."); return
+            restante=max(treino['fim_em']-datetime.now(timezone.utc), timedelta(0)); minutos=max(0,int(restante.total_seconds()//60))
+            return await ctx.send(f"🏋️ **PERSONAGEM EM TREINAMENTO**\nVocê está treinando **{treino['alvo']}** e não pode iniciar uma cena.\n⏳ Restam aproximadamente **{minutos//60}h {minutos%60}min**.")
         ficha=await buscar_ficha(ctx.author.id)
-        if not ficha: await ctx.send("❌ Você ainda não possui ficha ativa."); return
+        if not ficha:return await ctx.send("❌ Você ainda não possui ficha ativa.")
         ok,local_canal,estado=await self.validar_localizacao_do_canal(ctx)
-        erro = None if ok else f"🚫 Você está em **{estado['localizacao'] if estado else 'outro local'}**, mas este canal representa **{local_canal}**."
-        if not ok: await ctx.send(erro); return
-        await ctx.send("🎬 **INICIAR NARRAÇÃO**\nQuantos jogadores vão participar? Envie apenas o número. **Não existe limite fixo.**")
-        def check(m): return m.author.id==ctx.author.id and m.channel.id==ctx.channel.id and m.content.strip().isdigit()
+        if not ok:return await ctx.send(f"🚫 Você está em **{estado['localizacao'] if estado else 'outro local'}**, mas este canal representa **{local_canal}**.")
+
+        # Canal da ilha = HUB. A campanha vive sempre em um tópico próprio.
+        canal_execucao=ctx.channel
+        if not isinstance(ctx.channel, discord.Thread):
+            marcador=f"camp-{ctx.author.id}"
+            thread=next((t for t in getattr(ctx.channel,'threads',[]) if marcador in t.name),None)
+            if thread is None:
+                try:
+                    nome=f"📖・{ficha['nome'][:45]} — {local_canal or ctx.channel.name}・{marcador}"[:100]
+                    thread=await ctx.channel.create_thread(name=nome,type=discord.ChannelType.public_thread,auto_archive_duration=1440,reason=f"Campanha Sea's Paradise de {ctx.author}")
+                except (discord.Forbidden,discord.HTTPException,AttributeError) as erro:
+                    return await ctx.send(f"❌ Não consegui criar o tópico da campanha: `{type(erro).__name__}`.")
+            try:
+                if thread.archived: await thread.edit(archived=False)
+                await thread.add_user(ctx.author)
+            except (discord.Forbidden,discord.HTTPException,AttributeError):pass
+            canal_execucao=thread
+            await ctx.send(f"{ctx.author.mention}, sua campanha continua em {thread.mention}.",delete_after=12)
+
+        if await buscar_sessao_ativa(canal_execucao.id):
+            return await canal_execucao.send("🎬 Já existe narração ativa aqui. Use `!sessao` ou continue com `!acao`.")
+        await canal_execucao.send(f"{ctx.author.mention}\n🎬 **INICIAR CAMPANHA**\nQuantos jogadores vão participar? Envie apenas o número. **Não existe limite fixo.**")
+        def check(m): return m.author.id==ctx.author.id and m.channel.id==canal_execucao.id and m.content.strip().isdigit()
         try: msg=await self.bot.wait_for("message",timeout=90,check=check)
-        except asyncio.TimeoutError: await ctx.send("⌛ Início cancelado."); return
+        except asyncio.TimeoutError:return await canal_execucao.send("⌛ Início cancelado.")
         qtd=int(msg.content.strip())
-        if qtd<1: await ctx.send("❌ Informe pelo menos 1 jogador."); return
+        if qtd<1:return await canal_execucao.send("❌ Informe pelo menos 1 jogador.")
         local=estado["localizacao"] if estado else local_canal; area=estado["area"] if estado and estado["area"] else None
-        s=await obter_ou_criar_sessao(getattr(ctx.guild,"id",None),ctx.channel.id,local,area)
-        s=await definir_campanha_sessao(s["id"], local)
-        s=await configurar_sessao_narracao(s["id"],qtd); await entrar_sessao(s["id"],ctx.author.id,ficha["nome"])
-        prog=await listar_progresso_campanha(ctx.author.id,local)
-        camp,proximo,trilha=contexto_campanha(local,[x['npc_nome'] for x in prog])
+        s=await obter_ou_criar_sessao(getattr(ctx.guild,"id",None),canal_execucao.id,local,area)
+        s=await definir_campanha_sessao(s["id"], local); s=await configurar_sessao_narracao(s["id"],qtd); await entrar_sessao(s["id"],ctx.author.id,ficha["nome"])
+        prog=await listar_progresso_campanha(ctx.author.id,local); camp,proximo,trilha=contexto_campanha(local,[x['npc_nome'] for x in prog])
         if qtd==1:
-            await marcar_sessao_iniciada(s["id"])
-            marco=f"\n🎯 Marco atual: **{proximo['nome']}**" if proximo else "\n🌍 Campanha emergente: explore e faça o mundo reagir às suas decisões."
-            await ctx.send(f"▶️ **CAMPANHA INICIADA — SOLO**\n📍 {local}{marco}\nUse `!acao`. Combates nascem dentro da própria campanha e continuam pelo mesmo narrador. Para terminar, `!encerrar`.")
+            await marcar_sessao_iniciada(s["id"]); marco=f"\n🎯 Marco atual: **{proximo['nome']}**" if proximo else "\n🌍 Campanha emergente: explore e faça o mundo reagir às suas decisões."
+            await canal_execucao.send(f"▶️ **CAMPANHA INICIADA — SOLO**\n📍 {local}{marco}\nUse `!acao`. Combates nascem dentro da própria campanha. Para terminar, `!encerrar`.")
         else:
-            await ctx.send(f"🎭 **Sessão para {qtd} jogadores criada.**\n✅ {ficha['nome']} — **1/{qtd}**\nOs demais usam `!entrar`. Ao chegar em {qtd}/{qtd}, começa automaticamente.")
+            await canal_execucao.send(f"🎭 **Sessão para {qtd} jogadores criada.**\n✅ {ficha['nome']} — **1/{qtd}**\nOs demais usam `!entrar` neste tópico. Ao chegar em {qtd}/{qtd}, começa automaticamente.")
 
     @commands.command(name="entrar")
     async def entrar_narracao(self,ctx):
@@ -2001,7 +2017,7 @@ REGRA DE TAMANHO DA RESPOSTA
         await ctx.send(embed=discord.Embed(title="📖 RESUMO DA NARRAÇÃO",description=resumo,color=discord.Color.gold()))
 
     @commands.command(name="encerrar")
-    @commands.has_permissions(administrator=True)
+    @commands.check(lambda ctx: mestre_ou_admin(ctx.author))
     async def encerrar_narracao(self, ctx):
         sessao = await buscar_sessao_ativa(ctx.channel.id)
         if not sessao:
@@ -2051,13 +2067,13 @@ REGRA DE TAMANHO DA RESPOSTA
         )
 
     @commands.command(name="localplayer")
-    @commands.has_permissions(administrator=True)
+    @commands.check(lambda ctx: mestre_ou_admin(ctx.author))
     async def localplayer(self, ctx, membro: discord.Member, *, localizacao: str):
         await definir_localizacao_jogador(membro.id, localizacao)
         await ctx.send(f"🧭 Localização persistente de **{membro.display_name}** definida como **{localizacao}**.")
 
     @commands.command(name="npclocal")
-    @commands.has_permissions(administrator=True)
+    @commands.check(lambda ctx: mestre_ou_admin(ctx.author))
     async def npclocal(self, ctx, nome_npc: str, *, localizacao: str):
         npc = await self.garantir_npc_catalogado(nome_npc)
         if not npc:
@@ -2112,7 +2128,7 @@ REGRA DE TAMANHO DA RESPOSTA
         await ctx.send(embed=embed)
 
     @commands.command(name="npcatributos")
-    @commands.has_permissions(administrator=True)
+    @commands.check(lambda ctx: mestre_ou_admin(ctx.author))
     async def npcatributos(self, ctx, nome_npc: str, forca: int, resistencia: int, velocidade: int):
         try:
             npc = await definir_atributos_npc(nome_npc, forca, resistencia, velocidade)
@@ -2137,25 +2153,25 @@ REGRA DE TAMANHO DA RESPOSTA
         )
 
     @commands.command(name="limparcena")
-    @commands.has_permissions(administrator=True)
+    @commands.check(lambda ctx: mestre_ou_admin(ctx.author))
     async def limparcena(self, ctx):
         historicos.pop(chave_cena(ctx), None)
         await ctx.send("🧹 Memória narrativa deste tópico limpa.")
 
     @commands.command(name="npcregistrar")
-    @commands.has_permissions(administrator=True)
+    @commands.check(lambda ctx: mestre_ou_admin(ctx.author))
     async def npcregistrar(self, ctx, *, nome: str):
         npc = await registrar_npc(nome)
         await ctx.send(f"🌍 NPC persistente registrado: **{npc['nome']}**.")
 
     @commands.command(name="npcmemoria")
-    @commands.has_permissions(administrator=True)
+    @commands.check(lambda ctx: mestre_ou_admin(ctx.author))
     async def npcmemoria(self, ctx, nome_npc: str, *, resumo: str):
         await registrar_memoria_npc(nome_npc, resumo, permanente=True)
         await ctx.send(f"🧠 Memória permanente adicionada a **{nome_npc}**.")
 
     @commands.command(name="npcrecrutar")
-    @commands.has_permissions(administrator=True)
+    @commands.check(lambda ctx: mestre_ou_admin(ctx.author))
     async def npcrecrutar(self, ctx, membro: discord.Member, *, nome_npc: str):
         ficha = await buscar_ficha(membro.id)
         if not ficha:
