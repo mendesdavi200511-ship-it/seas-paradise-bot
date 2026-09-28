@@ -94,6 +94,34 @@ for x in ["Kuraigana Island","Momoiro Island","Boin Archipelago","Karakuri Islan
     rota("Sabaody Archipelago",x,180,"eternal_or_route",3,10,LOCAIS[x][1])
 rota("Jaya","Weatheria",180,"special",2,8,3)
 
+# Rede complementar: todo local cadastrado precisa ter pelo menos uma saída.
+# A CADEIA acima continua sendo a progressão principal; estas ligações evitam
+# ilhas sem saída e conectam os locais canônicos/laterais ao mundo navegável.
+ROTAS_COMPLEMENTARES = [
+    ("Dawn Island","Goa Kingdom"),("Goa Kingdom","Shells Town"),("Loguetown","Tequila Wolf"),
+    ("Tequila Wolf","Reverse Mountain"),("Twin Cape","Lulusia Kingdom"),("Lulusia Kingdom","Whisky Peak"),
+    ("Alabasta","Ohara"),("Ohara","Ilusia Kingdom"),("Ilusia Kingdom","Kano Country"),("Kano Country","Jaya"),
+    ("Water 7","Germa Kingdom"),("Germa Kingdom","Flevance"),("Flevance","Lvneel Kingdom"),("Lvneel Kingdom","Thriller Bark"),
+    ("Sabaody Archipelago","Sorbet Kingdom"),("Sorbet Kingdom","Centauria"),("Centauria","Baterilla"),("Baterilla","Fish-Man Island"),
+    ("Amazon Lily","Rusukaina"),("Marineford","Mary Geoise"),("Dressrosa","Karai Bari Island"),
+    ("Zou","Hachinosu Pirate Island"),("Hachinosu Pirate Island","Hachinosu"),("Hachinosu","God Valley"),
+    ("Wano Country","Winner Island"),("Egghead","Elbaf"),
+]
+for a,b in ROTAS_COMPLEMENTARES:
+    if a in LOCAIS and b in LOCAIS and (a,b) not in ROTAS_INFO:
+        reg=LOCAIS[b][0]
+        req="log_pose" if reg in {"Grand Line","New World","Red Line","Totto Land","Paradise"} else "barco"
+        rota(a,b,90,req,2,7,max(LOCAIS[a][1],LOCAIS[b][1]))
+
+# Garantia final: nenhum local do catálogo fica eternamente preso. Se um novo
+# local for adicionado no futuro sem rota explícita, ele é ligado ao porto
+# anterior do catálogo até receber uma rota própria de design.
+_locais_ordenados=list(LOCAIS)
+for i,local in enumerate(_locais_ordenados):
+    if not any(a==local for a,_ in ROTAS_INFO):
+        vizinho=_locais_ordenados[i-1] if i else _locais_ordenados[1]
+        rota(local,vizinho,90,"barco",2,7,max(LOCAIS[local][1],LOCAIS[vizinho][1]))
+
 OBSTACULOS = {
   1:[("🌫️","Neblina fechada","A visibilidade caiu. Decidam como manter o rumo sem perder tempo."),
      ("🌊","Corrente lateral","Uma corrente começa a empurrar o navio para fora da rota.")],
