@@ -1,4 +1,5 @@
 import discord
+import re
 from discord.ext import commands
 
 GUILD_ID = 1539056186798903418
@@ -12,11 +13,11 @@ BOAS_VINDAS_ID = 1539056188371632160
 CRIAR_ID = 1551379201939218502
 FICHAS_ID = 1554178079725981869
 MESTRE_ROLE_ID = 1541858353196695632
-AUTO_ROLES = [1542161384039776366,1542161683739574392,1542161421402644580,1542161536016064544,1542161469817491498,1542161789960192101,1542161738517192796]
+AUTO_ROLES = [1542161384039776366,1542161683739574392,1542161421402644580,1542161536016064544,1542161469817491498,1542161789960192101,1542161738517192796,1541858736241647787,1542161091227029516,1542161193358074026,1542161337667289119]
 WELCOME_GIF = 'https://tenor.com/bGup1.gif'
 
 NPC_MASTER_COMMANDS = {'npclocal','npcatributos','limparcena','npcregistrar','npcmemoria','npcrecrutar'}
-WORLD_MASTER_COMMANDS = {'localplayer','encerrar'}
+WORLD_MASTER_COMMANDS = {'localplayer'}
 
 
 def mestre_ou_admin(member):
@@ -37,11 +38,37 @@ class Servidor(commands.Cog):
     def cog_unload(self):
         self.bot.remove_check(self.regras_comandos)
 
+    @commands.Cog.listener()
+    async def on_ready(self):
+        # Migração silenciosa dos tópicos v83/v84: tira IDs técnicos do nome e guarda no banco.
+        guild=self.bot.get_guild(GUILD_ID)
+        if not guild: return
+        try:
+            from database.database import salvar_topico_personagem, salvar_topico_campanha
+            for th in list(guild.threads):
+                m=re.search(r'sp-(\d+)',th.name)
+                if m and th.parent_id==FICHAS_ID:
+                    uid=int(m.group(1)); await salvar_topico_personagem(uid,th.id)
+                    membro=guild.get_member(uid); nome=membro.display_name if membro else 'Personagem'
+                    try: await th.edit(name=f'📋・{nome[:70]} — Minha Ficha'[:100])
+                    except (discord.Forbidden,discord.HTTPException): pass
+                    continue
+                m=re.search(r'camp-(\d+)',th.name)
+                if m and th.parent_id:
+                    uid=int(m.group(1)); await salvar_topico_campanha(uid,th.parent_id,th.id)
+                    limpo=re.sub(r'[・\s]*camp-\d+\.?$','',th.name).strip()[:100]
+                    try: await th.edit(name=limpo or '📖・Campanha')
+                    except (discord.Forbidden,discord.HTTPException): pass
+        except Exception as erro:
+            print(f'⚠️ Migração de tópicos: {type(erro).__name__}: {erro}')
+
     async def regras_comandos(self, ctx):
         if not ctx.command or not ctx.guild or ctx.guild.id != GUILD_ID: return True
         nome=ctx.command.qualified_name.split()[0].casefold()
         cid=getattr(ctx.channel,'id',0)
         if cid == CRIAR_ID and nome != 'criar':
+            try: await ctx.message.delete()
+            except (discord.Forbidden,discord.NotFound): pass
             await ctx.send(f'🔒 Neste canal só é permitido `!criar`. Use seu tópico em <#{FICHAS_ID}> para ficha/edição.', delete_after=10)
             return False
         if nome == 'admin':
@@ -129,7 +156,8 @@ class Servidor(commands.Cog):
         if ch:
             e=discord.Embed(title="🏴‍☠️ BEM-VINDO AO SEA'S PARADISE!",description=f'{member.mention} acaba de chegar aos mares.\n\nLeia as regras, prepare seu personagem e comece sua jornada!')
             e.set_footer(text=f'Membro #{member.guild.member_count}')
-            await ch.send(content=WELCOME_GIF, embed=e)
+            e.set_image(url=WELCOME_GIF)
+            await ch.send(embed=e)
 
     @commands.Cog.listener()
     async def on_member_ban(self,guild,user):
@@ -152,6 +180,9 @@ class Servidor(commands.Cog):
     async def on_message(self,message):
         if not message.guild or message.guild.id!=GUILD_ID or message.author.bot:return
         if message.channel.id==CRIAR_ID and message.content.strip().casefold()!='!criar':
+            # Comandos são tratados pelo check global para não gerar aviso duplicado.
+            if message.content.lstrip().startswith('!'):
+                return
             try: await message.delete()
             except (discord.Forbidden,discord.NotFound): pass
             try:
@@ -174,9 +205,20 @@ class Servidor(commands.Cog):
         if not mestre_ou_admin(ctx.author):return await ctx.send('❌ Apenas Administradores e Mestres.')
         if ctx.channel.id!=CONTROLE_NPCS_ID:return await ctx.send(f'🎭 Use em <#{CONTROLE_NPCS_ID}>.')
         from database.database import listar_npcs_mundo
-        rows=await listar_npcs_mundo(50)
-        e=discord.Embed(title='🎭 CONTROLE DE NPCs',description='NPCs persistentes conhecidos pelo mundo.')
-        e.add_field(name='NPCs',value='\n'.join(f"• **{x['nome']}** — {x['localizacao'] or 'local desconhecido'} • {x['status']}" for x in rows[:30])[:4000] or 'Nenhum NPC.',inline=False)
+        try:
+            rows=await listar_npcs_mundo(50)
+        except Exception as erro:
+            print(f"❌ ERRO PAINEL NPC — {type(erro).__name__}: {erro}")
+            return await ctx.send('⚠️ Não consegui consultar os NPCs persistentes agora. O erro foi registrado no console.')
+        e=discord.Embed(title='🎭 CONTROLE DE NPCs',description='NPCs persistentes conhecidos pelo mundo.', color=discord.Color.dark_teal())
+        linhas=[]
+        for x in rows[:30]:
+            nome=x['nome'] if 'nome' in x else 'NPC'
+            local=(x['localizacao'] if 'localizacao' in x else None) or 'local desconhecido'
+            status=(x['status'] if 'status' in x else None) or 'desconhecido'
+            linhas.append(f"• **{nome}** — {local} • {status}")
+        e.add_field(name='NPCs',value='\n'.join(linhas)[:4000] or 'Nenhum NPC persistente registrado.',inline=False)
+        e.set_footer(text="Sea's Paradise • Mestragem")
         await ctx.send(embed=e)
 
 async def setup(bot):

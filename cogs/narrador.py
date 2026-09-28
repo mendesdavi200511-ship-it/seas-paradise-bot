@@ -57,6 +57,7 @@ from database.database import (
     buscar_evento_por_thread, status_participacao_evento, participar_evento_global, buscar_sessao_por_id,
     registrar_prisao, buscar_prisao_ativa, libertar_prisao, expulsar_faccao, buscar_edicao_jornal_24h,
     listar_progresso_campanha, registrar_boss_campanha, definir_campanha_sessao,
+    buscar_topico_campanha, salvar_topico_campanha, buscar_topico_personagem, remover_topico_personagem,
 )
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -299,13 +300,11 @@ class Narrador(commands.Cog):
         self.atualizar_jornal_24h.cancel()
 
     async def cog_before_invoke(self, ctx):
-        # No canal de RP, comandos operacionais somem sozinhos; !acao é parte do registro narrativo.
-        if ctx.command and ctx.command.name != "acao":
-            async def apagar_comando():
-                await asyncio.sleep(120)
-                try: await ctx.message.delete()
-                except (discord.NotFound, discord.Forbidden, discord.HTTPException): pass
-            asyncio.create_task(apagar_comando())
+        # Mantém HUBs/tópicos de campanha limpos: o comando é processado, mas a mensagem some.
+        comandos_campanha={"iniciar","entrar","acao","ação","passar","combate","pronto","resolver","resolvercena","resumo","encerrar","sessao","sessão","ondeestou"}
+        if ctx.command and ctx.command.name.casefold() in comandos_campanha:
+            try: await ctx.message.delete()
+            except (discord.NotFound,discord.Forbidden,discord.HTTPException): pass
 
     async def aviso(self, ctx, conteudo=None, *, embed=None, segundos=120):
         # Avisos operacionais são temporários e, quando destinados a um jogador,
@@ -1318,38 +1317,18 @@ Responda SOMENTE JSON válido, sem markdown, neste formato:
         return evento
 
     async def apagar_central_personagem(self, guild, user_id):
-        """Apaga SOMENTE a thread central sp-USER_ID; nunca a thread/canal da aventura."""
-        if guild is None:
-            return False
-        marcador = f"sp-{user_id}"
-        canal = guild.get_channel(CANAL_FICHAS_ID)
-        if canal is None:
-            try:
-                canal = await guild.fetch_channel(CANAL_FICHAS_ID)
-            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
-                canal = None
-        candidatos = list(getattr(guild, "threads", []))
-        if canal is not None:
-            candidatos.extend(getattr(canal, "threads", []))
-        for thread in candidatos:
-            if thread.parent_id == CANAL_FICHAS_ID and marcador in thread.name:
-                try:
-                    await thread.delete(reason="Sea's Paradise — personagem morreu; central antiga removida.")
-                    return True
-                except discord.NotFound:
-                    return True
-                except (discord.Forbidden, discord.HTTPException):
-                    return False
-        if canal is not None:
-            for kwargs in ({"limit": None}, {"limit": None, "private": True, "joined": False}):
-                try:
-                    async for thread in canal.archived_threads(**kwargs):
-                        if marcador in thread.name:
-                            await thread.delete(reason="Sea's Paradise — personagem morreu; central antiga removida.")
-                            return True
-                except (discord.Forbidden, discord.NotFound, discord.HTTPException, TypeError, AttributeError):
-                    pass
-        return False
+        """Apaga somente a central registrada do personagem; o ID fica oculto no banco."""
+        if guild is None: return False
+        reg=await buscar_topico_personagem(user_id)
+        if not reg: return False
+        try:
+            thread=guild.get_thread(reg['thread_id']) or await guild.fetch_channel(reg['thread_id'])
+            await thread.delete(reason="Sea's Paradise — personagem removido; central antiga apagada.")
+            await remover_topico_personagem(user_id)
+            return True
+        except discord.NotFound:
+            await remover_topico_personagem(user_id); return True
+        except (discord.Forbidden,discord.HTTPException): return False
 
     async def gerar_narracao(self, ctx, acao, ficha, especializacoes, sessao_id):
         mundo = await self.contexto_mundo(acao, ctx.author.id)
@@ -1855,23 +1834,35 @@ REGRA DE TAMANHO DA RESPOSTA
         ok,local_canal,estado=await self.validar_localizacao_do_canal(ctx)
         if not ok:return await ctx.send(f"🚫 Você está em **{estado['localizacao'] if estado else 'outro local'}**, mas este canal representa **{local_canal}**.")
 
-        # Canal da ilha = HUB. A campanha vive sempre em um tópico próprio.
+        # Canal da ilha = HUB. A campanha vive em tópico próprio; vínculo técnico fica no banco.
         canal_execucao=ctx.channel
         if not isinstance(ctx.channel, discord.Thread):
-            marcador=f"camp-{ctx.author.id}"
-            thread=next((t for t in getattr(ctx.channel,'threads',[]) if marcador in t.name),None)
+            thread=None
+            registro=await buscar_topico_campanha(ctx.author.id, ctx.channel.id)
+            if registro:
+                try: thread=ctx.guild.get_thread(registro['thread_id']) or await ctx.guild.fetch_channel(registro['thread_id'])
+                except (discord.NotFound,discord.Forbidden,discord.HTTPException): thread=None
+            # Migra tópicos antigos que exibiam camp-ID no nome.
+            if thread is None:
+                marcador_antigo=f"camp-{ctx.author.id}"
+                thread=next((t for t in getattr(ctx.channel,'threads',[]) if marcador_antigo in t.name),None)
+                if thread: await salvar_topico_campanha(ctx.author.id,ctx.channel.id,thread.id)
+            nome_limpo=f"📖・{ficha['nome'][:45]} — {local_canal or ctx.channel.name}"[:100]
             if thread is None:
                 try:
-                    nome=f"📖・{ficha['nome'][:45]} — {local_canal or ctx.channel.name}・{marcador}"[:100]
-                    thread=await ctx.channel.create_thread(name=nome,type=discord.ChannelType.public_thread,auto_archive_duration=1440,reason=f"Campanha Sea's Paradise de {ctx.author}")
+                    thread=await ctx.channel.create_thread(name=nome_limpo,type=discord.ChannelType.public_thread,auto_archive_duration=1440,reason=f"Campanha Sea's Paradise de {ctx.author}")
+                    await salvar_topico_campanha(ctx.author.id,ctx.channel.id,thread.id)
                 except (discord.Forbidden,discord.HTTPException,AttributeError) as erro:
                     return await ctx.send(f"❌ Não consegui criar o tópico da campanha: `{type(erro).__name__}`.")
             try:
                 if thread.archived: await thread.edit(archived=False)
+                if thread.name != nome_limpo: await thread.edit(name=nome_limpo)
                 await thread.add_user(ctx.author)
-            except (discord.Forbidden,discord.HTTPException,AttributeError):pass
+            except (discord.Forbidden,discord.HTTPException,AttributeError): pass
             canal_execucao=thread
-            await ctx.send(f"{ctx.author.mention}, sua campanha continua em {thread.mention}.",delete_after=12)
+            try: await ctx.message.delete()
+            except (discord.Forbidden,discord.NotFound): pass
+            aviso=await ctx.send(f"{ctx.author.mention}, sua campanha continua em {thread.mention}.",delete_after=8)
 
         if await buscar_sessao_ativa(canal_execucao.id):
             return await canal_execucao.send("🎬 Já existe narração ativa aqui. Use `!sessao` ou continue com `!acao`.")
@@ -1880,6 +1871,8 @@ REGRA DE TAMANHO DA RESPOSTA
         try: msg=await self.bot.wait_for("message",timeout=90,check=check)
         except asyncio.TimeoutError:return await canal_execucao.send("⌛ Início cancelado.")
         qtd=int(msg.content.strip())
+        try: await msg.delete()
+        except (discord.Forbidden,discord.NotFound): pass
         if qtd<1:return await canal_execucao.send("❌ Informe pelo menos 1 jogador.")
         local=estado["localizacao"] if estado else local_canal; area=estado["area"] if estado and estado["area"] else None
         s=await obter_ou_criar_sessao(getattr(ctx.guild,"id",None),canal_execucao.id,local,area)
@@ -2018,13 +2011,17 @@ REGRA DE TAMANHO DA RESPOSTA
         await ctx.send(embed=discord.Embed(title="📖 RESUMO DA NARRAÇÃO",description=resumo,color=discord.Color.gold()))
 
     @commands.command(name="encerrar")
-    @commands.check(lambda ctx: mestre_ou_admin(ctx.author))
     async def encerrar_narracao(self, ctx):
         sessao = await buscar_sessao_ativa(ctx.channel.id)
         if not sessao:
             await ctx.send("📭 Não há sessão ativa para encerrar neste canal.")
             return
         participantes=await listar_participantes_sessao(sessao["id"],True)
+        participante_ids={p["user_id"] for p in participantes}
+        if ctx.author.id not in participante_ids and not mestre_ou_admin(ctx.author):
+            return await ctx.send("❌ Apenas participantes desta campanha ou a Mestragem podem encerrá-la.")
+        try: await ctx.message.delete()
+        except (discord.Forbidden,discord.NotFound): pass
         conflito=bool(sessao["conflito_ativo"]) if "conflito_ativo" in sessao else False
         if not conflito:
             for pp in participantes:

@@ -15,6 +15,7 @@ from database.database import (
     contar_itens_inventario,
     buscar_embarcacao_ativa,
     listar_formas,
+    salvar_topico_personagem, buscar_topico_personagem, remover_topico_personagem,
 )
 
 from views.criacao import (
@@ -1325,38 +1326,17 @@ class Personagem(
         self.bot = bot
 
 
-    def topico_do_jogador(self, ctx):
-        """Retorna True somente no tópico individual do próprio jogador."""
-        if not isinstance(ctx.channel, discord.Thread):
-            return False
-
-        if ctx.channel.parent_id != CANAL_FICHAS_ID:
-            return False
-
-        marcador = f"sp-{ctx.author.id}"
-        return ctx.channel.name.endswith(marcador)
-
-
     async def exigir_topico_do_jogador(self, ctx):
-        """Bloqueia comandos de ficha fora do tópico individual."""
-        if self.topico_do_jogador(ctx):
-            return True
-
-        aviso = await ctx.send(
-            f"❌ Este comando só pode ser usado no seu tópico em "
-            f"<#{CANAL_FICHAS_ID}>."
-        )
-
-        try:
-            await ctx.message.delete()
-        except (discord.Forbidden, discord.NotFound):
-            pass
-
-        try:
-            await aviso.delete(delay=10)
-        except (discord.Forbidden, discord.NotFound):
-            pass
-
+        """Valida a central pelo ID registrado no banco, sem expor IDs no nome do tópico."""
+        if isinstance(ctx.channel, discord.Thread) and ctx.channel.parent_id == CANAL_FICHAS_ID:
+            reg=await buscar_topico_personagem(ctx.author.id)
+            if reg and int(reg['thread_id']) == ctx.channel.id:
+                return True
+        aviso = await ctx.send(f"❌ Este comando só pode ser usado no seu tópico em <#{CANAL_FICHAS_ID}>.")
+        try: await ctx.message.delete()
+        except (discord.Forbidden,discord.NotFound): pass
+        try: await aviso.delete(delay=10)
+        except (discord.Forbidden,discord.NotFound): pass
         return False
 
 
@@ -1424,39 +1404,30 @@ class Personagem(
             return
 
         thread = None
-        marcador = f"sp-{ctx.author.id}"
 
-        # Se já estiver na própria thread, usa ela.
-        if eh_thread_criacao:
-            thread = ctx.channel
-
-        # Procura uma thread ativa existente.
-        if thread is None:
-            for candidata in canal.threads:
-                if candidata.name.endswith(marcador):
-                    thread = candidata
-                    break
-
-        # Procura também threads arquivadas para impedir duplicação.
-        if thread is None:
+        # O vínculo jogador ↔ tópico fica no banco. IDs internos nunca aparecem no Discord.
+        registro = await buscar_topico_personagem(ctx.author.id)
+        if registro:
             try:
-                async for candidata in canal.archived_threads(limit=100):
-                    if candidata.name.endswith(marcador):
-                        thread = candidata
-                        break
-            except (
-                discord.Forbidden,
-                discord.HTTPException,
-                AttributeError
-            ):
-                pass
+                thread = guild.get_thread(registro["thread_id"]) or await guild.fetch_channel(registro["thread_id"])
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                thread = None
 
-        # Só cria uma nova se o jogador realmente não possuir uma.
+        # Compatibilidade: encontra tópicos antigos com marcador e os migra para nome limpo.
         if thread is None:
-            nome_thread = (
-                f"🏴‍☠️-{ctx.author.display_name[:45]}-{marcador}"
-            )
+            marcador_antigo = f"sp-{ctx.author.id}"
+            candidatas = list(getattr(canal, "threads", []))
+            try:
+                async for t in canal.archived_threads(limit=100):
+                    candidatas.append(t)
+            except (discord.Forbidden, discord.HTTPException, AttributeError):
+                pass
+            thread = next((t for t in candidatas if marcador_antigo in t.name), None)
+            if thread is not None:
+                await salvar_topico_personagem(ctx.author.id, thread.id)
 
+        if thread is None:
+            nome_thread = f"📋・{ctx.author.display_name[:70]} — Minha Ficha"
             try:
                 if isinstance(canal, discord.ForumChannel):
                     criado = await canal.create_thread(
@@ -1473,25 +1444,20 @@ class Personagem(
                         auto_archive_duration=1440,
                         reason=f"Sea's Paradise — ficha de {ctx.author}"
                     )
-
+                await salvar_topico_personagem(ctx.author.id, thread.id)
             except discord.Forbidden:
-                await ctx.send(
-                    "❌ O bot não possui permissão para criar "
-                    "tópicos neste canal."
-                )
+                await ctx.send("❌ O bot não possui permissão para criar tópicos neste canal.")
                 return
-
             except discord.HTTPException as erro:
-                print(
-                    "❌ ERRO AO CRIAR THREAD:",
-                    type(erro).__name__,
-                    erro
-                )
-
-                await ctx.send(
-                    "❌ Não consegui criar seu tópico de criação."
-                )
+                print("❌ ERRO AO CRIAR THREAD:", type(erro).__name__, erro)
+                await ctx.send("❌ Não consegui criar seu tópico de criação.")
                 return
+
+        # Remove o identificador técnico de tópicos criados em versões antigas.
+        nome_limpo = f"📋・{ctx.author.display_name[:70]} — Minha Ficha"[:100]
+        if thread.name != nome_limpo:
+            try: await thread.edit(name=nome_limpo, reason="Sea's Paradise v85 — nome limpo")
+            except (discord.Forbidden, discord.HTTPException): pass
 
         # Se a thread antiga estiver arquivada, reabre.
         try:
@@ -1820,92 +1786,21 @@ class Personagem(
 
         # Ao resetar a ficha, remove também o tópico individual do jogador.
         # A busca é feita em threads ativas + arquivadas e usa o marcador
-        # sp-ID em qualquer parte do nome para não depender do cache/nome exato.
+        # A central é localizada pelo registro interno; nenhum ID precisa aparecer no nome.
         thread_apagada = False
         guild = ctx.guild
-
         if guild is not None:
-            marcador = f"sp-{membro.id}"
-            thread = None
-
-            # 1) Se o comando foi executado no próprio tópico do jogador,
-            # já temos a referência mais confiável possível.
-            if (
-                isinstance(ctx.channel, discord.Thread)
-                and ctx.channel.parent_id == CANAL_FICHAS_ID
-                and marcador in ctx.channel.name
-            ):
-                thread = ctx.channel
-
-            # 2) Procura entre todas as threads ativas conhecidas da guild.
-            if thread is None:
-                for candidata in guild.threads:
-                    if (
-                        candidata.parent_id == CANAL_FICHAS_ID
-                        and marcador in candidata.name
-                    ):
-                        thread = candidata
-                        break
-
-            # 3) Procura no canal oficial, inclusive arquivadas.
-            canal = guild.get_channel(CANAL_FICHAS_ID)
-            if canal is None:
+            reg=await buscar_topico_personagem(membro.id)
+            if reg:
                 try:
-                    canal = await guild.fetch_channel(CANAL_FICHAS_ID)
-                except (
-                    discord.Forbidden,
-                    discord.NotFound,
-                    discord.HTTPException
-                ):
-                    canal = None
-
-            if thread is None and canal is not None:
-                for candidata in getattr(canal, "threads", []):
-                    if marcador in candidata.name:
-                        thread = candidata
-                        break
-
-            if thread is None and canal is not None:
-                try:
-                    async for candidata in canal.archived_threads(limit=None):
-                        if marcador in candidata.name:
-                            thread = candidata
-                            break
-                except (
-                    discord.Forbidden,
-                    discord.HTTPException,
-                    AttributeError
-                ) as erro:
-                    print(
-                        "⚠️ ERRO AO PROCURAR TÓPICO ARQUIVADO:",
-                        type(erro).__name__,
-                        erro
-                    )
-
-            if thread is not None:
-                try:
-                    await thread.delete(
-                        reason=(
-                            "Sea's Paradise — ficha resetada por "
-                            f"{ctx.author}"
-                        )
-                    )
-                    thread_apagada = True
-                except (
-                    discord.Forbidden,
-                    discord.NotFound,
-                    discord.HTTPException
-                ) as erro:
-                    print(
-                        "❌ ERRO AO APAGAR TÓPICO DA FICHA:",
-                        type(erro).__name__,
-                        erro
-                    )
-            else:
-                print(
-                    "⚠️ TÓPICO DA FICHA NÃO ENCONTRADO:",
-                    marcador
-                )
+                    thread=guild.get_thread(reg['thread_id']) or await guild.fetch_channel(reg['thread_id'])
+                    await thread.delete(reason=f"Sea's Paradise — ficha resetada por {ctx.author}")
+                    await remover_topico_personagem(membro.id)
+                    thread_apagada=True
+                except discord.NotFound:
+                    await remover_topico_personagem(membro.id); thread_apagada=True
+                except (discord.Forbidden,discord.HTTPException) as erro:
+                    print("❌ ERRO AO APAGAR TÓPICO DA FICHA:",type(erro).__name__,erro)
 
         mensagem = (
             f"🗑️ Ficha de {membro.mention} resetada."
