@@ -41,6 +41,9 @@ class Servidor(commands.Cog):
         if not ctx.command or not ctx.guild or ctx.guild.id != GUILD_ID: return True
         nome=ctx.command.qualified_name.split()[0].casefold()
         cid=getattr(ctx.channel,'id',0)
+        if cid == CRIAR_ID and nome != 'criar':
+            await ctx.send(f'🔒 Neste canal só é permitido `!criar`. Use seu tópico em <#{FICHAS_ID}> para ficha/edição.', delete_after=10)
+            return False
         if nome == 'admin':
             if cid != ADMIN_ID:
                 await ctx.send(f'🔒 `!admin` só pode ser usado em <#{ADMIN_ID}>.', delete_after=10); return False
@@ -71,6 +74,38 @@ class Servidor(commands.Cog):
         await ch.send(embed=e)
 
     @commands.Cog.listener()
+    async def on_raw_message_delete(self, payload):
+        # on_message_delete só recebe mensagens em cache; este fallback cobre as demais.
+        if payload.guild_id != GUILD_ID or payload.channel_id == LOGS_ID or payload.cached_message is not None:
+            return
+        ch = await _canal(self.bot, LOGS_ID)
+        if not ch:
+            return
+        e = discord.Embed(title='🗑️ MENSAGEM APAGADA (fora do cache)', description='O Discord não manteve o conteúdo desta mensagem em cache.')
+        e.add_field(name='Canal', value=f'<#{payload.channel_id}>', inline=False)
+        e.add_field(name='Mensagem ID', value=f'`{payload.message_id}`', inline=False)
+        await ch.send(embed=e)
+
+    @commands.Cog.listener()
+    async def on_raw_message_edit(self, payload):
+        # Fallback para edições de mensagens fora do cache.
+        if payload.guild_id != GUILD_ID or payload.channel_id == LOGS_ID or payload.cached_message is not None:
+            return
+        data = payload.data or {}
+        # Eventos de embed/link preview também disparam raw edit; só loga alteração com conteúdo.
+        if 'content' not in data:
+            return
+        ch = await _canal(self.bot, LOGS_ID)
+        if not ch:
+            return
+        autor = data.get('author') or {}
+        e = discord.Embed(title='✏️ MENSAGEM EDITADA (fora do cache)', description=(data.get('content') or '*vazio*')[:3500])
+        e.add_field(name='Autor', value=f"<@{autor.get('id')}> (`{autor.get('id')}`)" if autor.get('id') else 'Desconhecido', inline=False)
+        e.add_field(name='Canal', value=f'<#{payload.channel_id}>', inline=False)
+        e.add_field(name='Mensagem ID', value=f'`{payload.message_id}`', inline=False)
+        await ch.send(embed=e)
+
+    @commands.Cog.listener()
     async def on_message_edit(self, before, after):
         if not before.guild or before.guild.id != GUILD_ID or before.author == self.bot.user or before.channel.id == LOGS_ID or before.content == after.content:return
         ch=await _canal(self.bot,LOGS_ID)
@@ -93,9 +128,8 @@ class Servidor(commands.Cog):
         ch=await _canal(self.bot,BOAS_VINDAS_ID)
         if ch:
             e=discord.Embed(title="🏴‍☠️ BEM-VINDO AO SEA'S PARADISE!",description=f'{member.mention} acaba de chegar aos mares.\n\nLeia as regras, prepare seu personagem e comece sua jornada!')
-            e.set_image(url=WELCOME_GIF)
             e.set_footer(text=f'Membro #{member.guild.member_count}')
-            await ch.send(embed=e)
+            await ch.send(content=WELCOME_GIF, embed=e)
 
     @commands.Cog.listener()
     async def on_member_ban(self,guild,user):

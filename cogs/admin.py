@@ -586,9 +586,7 @@ class CatalogoView(
             return False
 
         if not (
-            interaction.user
-            .guild_permissions
-            .administrator
+            mestre_ou_admin(interaction.user)
         ):
 
             await interaction.response.send_message(
@@ -1124,9 +1122,7 @@ class EspecializacoesAdminView(
             return False
 
         if not (
-            interaction.user
-            .guild_permissions
-            .administrator
+            mestre_ou_admin(interaction.user)
         ):
 
             await interaction.response.send_message(
@@ -1244,9 +1240,7 @@ class AdminView(
             return False
 
         if not (
-            interaction.user
-            .guild_permissions
-            .administrator
+            mestre_ou_admin(interaction.user)
         ):
 
             await interaction.response.send_message(

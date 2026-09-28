@@ -1553,7 +1553,7 @@ class Personagem(
         # No canal principal fica apenas um aviso temporário.
         if ctx.channel.id == CANAL_CRIACAO_ID:
             try:
-                aviso = await canal.send(
+                aviso = await ctx.channel.send(
                     f"{ctx.author.mention}, sua criação está em "
                     f"{thread.mention}."
                 )

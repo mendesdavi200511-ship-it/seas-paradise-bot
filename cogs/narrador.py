@@ -4,8 +4,8 @@ import json
 import re
 from datetime import datetime, timezone, timedelta
 import discord
-from discord.ext import commands
-from cogs.servidor import mestre_ou_admin, tasks
+from discord.ext import commands, tasks
+from cogs.servidor import mestre_ou_admin
 from openai import AsyncOpenAI
 
 from database.database import buscar_viagem_ativa, buscar_treinamento_ativo, listar_subordinados, evento_ativo_usuario, forma_ativa
@@ -63,6 +63,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 MODELO_NARRADOR = "gpt-5.6-luna"
 LIMITE_HISTORICO = 12
 CANAL_CRIACAO_ID = 1551379201939218502
+CANAL_FICHAS_ID = 1554178079725981869
 historicos = {}
 locks = {}
 
@@ -1321,17 +1322,17 @@ Responda SOMENTE JSON válido, sem markdown, neste formato:
         if guild is None:
             return False
         marcador = f"sp-{user_id}"
-        canal = guild.get_channel(CANAL_CRIACAO_ID)
+        canal = guild.get_channel(CANAL_FICHAS_ID)
         if canal is None:
             try:
-                canal = await guild.fetch_channel(CANAL_CRIACAO_ID)
+                canal = await guild.fetch_channel(CANAL_FICHAS_ID)
             except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                 canal = None
         candidatos = list(getattr(guild, "threads", []))
         if canal is not None:
             candidatos.extend(getattr(canal, "threads", []))
         for thread in candidatos:
-            if thread.parent_id == CANAL_CRIACAO_ID and marcador in thread.name:
+            if thread.parent_id == CANAL_FICHAS_ID and marcador in thread.name:
                 try:
                     await thread.delete(reason="Sea's Paradise — personagem morreu; central antiga removida.")
                     return True
