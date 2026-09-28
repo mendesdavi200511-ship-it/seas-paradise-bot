@@ -742,6 +742,8 @@ async def criar_tabelas():
         await conn.execute("""CREATE TABLE IF NOT EXISTS prisoes (user_id BIGINT PRIMARY KEY REFERENCES fichas(user_id) ON DELETE CASCADE, local TEXT NOT NULL, motivo TEXT, status TEXT NOT NULL DEFAULT 'preso', preso_em TIMESTAMPTZ DEFAULT NOW(), execucao_em TIMESTAMPTZ);""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS organizacoes (id BIGSERIAL PRIMARY KEY, nome TEXT UNIQUE NOT NULL, tipo TEXT NOT NULL, lider_user_id BIGINT, criado_em TIMESTAMPTZ DEFAULT NOW());""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS membros_organizacao (organizacao_id BIGINT REFERENCES organizacoes(id) ON DELETE CASCADE, user_id BIGINT UNIQUE NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, cargo TEXT NOT NULL DEFAULT 'Membro', entrou_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(organizacao_id,user_id));""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS frotas_marinha (id BIGSERIAL PRIMARY KEY, nome TEXT UNIQUE NOT NULL, comandante_user_id BIGINT NOT NULL, criado_em TIMESTAMPTZ DEFAULT NOW());""")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS membros_frota_marinha (frota_id BIGINT REFERENCES frotas_marinha(id) ON DELETE CASCADE, user_id BIGINT UNIQUE NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, cargo TEXT NOT NULL DEFAULT 'Marinheiro', entrou_em TIMESTAMPTZ DEFAULT NOW(), PRIMARY KEY(frota_id,user_id));""")
         await conn.execute("""CREATE TABLE IF NOT EXISTS akumas_encontradas (id BIGSERIAL PRIMARY KEY, user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE, item_id TEXT NOT NULL, nome TEXT NOT NULL, tipo TEXT NOT NULL, encontrada_em TIMESTAMPTZ DEFAULT NOW(), expira_em TIMESTAMPTZ NOT NULL, consumida BOOLEAN DEFAULT FALSE);""")
         # Drops espontâneos de Akuma no Mi em canais de ilhas. Persistem entre redeploys.
         await conn.execute("""CREATE TABLE IF NOT EXISTS akuma_spawns_mundo (id BIGSERIAL PRIMARY KEY, guild_id BIGINT NOT NULL, channel_id BIGINT NOT NULL, localizacao TEXT NOT NULL, nome TEXT NOT NULL, tipo TEXT NOT NULL, mensagem_id BIGINT, status TEXT NOT NULL DEFAULT 'ativo', criado_em TIMESTAMPTZ DEFAULT NOW(), expira_em TIMESTAMPTZ NOT NULL, coletado_por BIGINT, coletado_em TIMESTAMPTZ);""")
@@ -2911,7 +2913,7 @@ async def consumir_akuma_encontrada(uid, texto=''):
             await c.execute("UPDATE fichas SET akuma=$2 WHERE user_id=$1",int(uid),escolhida['nome'])
             await c.execute("UPDATE inventario SET quantidade=GREATEST(0,quantidade-1) WHERE user_id=$1 AND item_id=$2",int(uid),escolhida['item_id'])
             await c.execute("UPDATE akumas_encontradas SET consumida=TRUE WHERE id=$1",escolhida['id'])
-            await c.execute("""INSERT INTO especializacoes(user_id,categoria,nome,percentual,limite,desbloqueado_por) VALUES($1,'Akuma no Mi',$2,0,300,'consumo') ON CONFLICT(user_id,categoria,nome) DO NOTHING""",int(uid),escolhida['nome'])
+            await c.execute("""INSERT INTO especializacoes(user_id,categoria,nome,porcentagem,limite,desbloqueado_por) VALUES($1,'Akuma no Mi',$2,0,300,'consumo') ON CONFLICT(user_id,categoria,nome) DO NOTHING""",int(uid),escolhida['nome'])
             return escolhida
 
 async def akumas_expiradas(): return await get_pool().fetch("SELECT * FROM akumas_encontradas WHERE consumida=FALSE AND expira_em<=NOW()")
@@ -2959,6 +2961,34 @@ async def transferir_capitania(tid,capitao_atual,novo):
             await c.execute("UPDATE membros_tripulacao SET cargo='Capitão' WHERE tripulacao_id=$1 AND user_id=$2",int(tid),int(novo))
             await c.execute("UPDATE tripulacoes SET capitao_user_id=$2 WHERE id=$1",int(tid),int(novo)); return True
 
+
+async def transferir_akuma_encontrada(origem,destino,akuma_id):
+    db=get_pool()
+    async with db.acquire() as c:
+        async with c.transaction():
+            a=await c.fetchrow("SELECT * FROM akumas_encontradas WHERE id=$1 AND user_id=$2 AND consumida=FALSE AND expira_em>NOW() FOR UPDATE",int(akuma_id),int(origem))
+            if not a:return False
+            if not await c.fetchrow("SELECT 1 FROM fichas WHERE user_id=$1",int(destino)):return False
+            inv=await c.fetchrow("SELECT quantidade FROM inventario WHERE user_id=$1 AND item_id=$2 FOR UPDATE",int(origem),a['item_id'])
+            if not inv or inv['quantidade']<1:return False
+            await c.execute("UPDATE inventario SET quantidade=quantidade-1 WHERE user_id=$1 AND item_id=$2",int(origem),a['item_id'])
+            await adicionar_item_inventario(int(destino),a['item_id'],1,c)
+            await c.execute("UPDATE akumas_encontradas SET user_id=$2 WHERE id=$1",a['id'],int(destino))
+            return True
+
+async def criar_frota_marinha(nome,comandante):
+    db=get_pool()
+    async with db.acquire() as c:
+        async with c.transaction():
+            if await c.fetchrow("SELECT 1 FROM membros_frota_marinha WHERE user_id=$1",int(comandante)):return None
+            r=await c.fetchrow("INSERT INTO frotas_marinha(nome,comandante_user_id) VALUES($1,$2) ON CONFLICT(nome) DO NOTHING RETURNING *",str(nome)[:60],int(comandante))
+            if not r:return None
+            await c.execute("INSERT INTO membros_frota_marinha(frota_id,user_id,cargo) VALUES($1,$2,'Comandante')",r['id'],int(comandante));return r
+async def buscar_frota_user(uid): return await get_pool().fetchrow("SELECT f.*,m.cargo FROM frotas_marinha f JOIN membros_frota_marinha m ON m.frota_id=f.id WHERE m.user_id=$1",int(uid))
+async def listar_membros_frota(fid): return await get_pool().fetch("SELECT m.*,f.nome FROM membros_frota_marinha m JOIN fichas f ON f.user_id=m.user_id WHERE m.frota_id=$1 ORDER BY m.entrou_em",int(fid))
+async def recrutar_frota(fid,uid): return await get_pool().execute("INSERT INTO membros_frota_marinha(frota_id,user_id) VALUES($1,$2) ON CONFLICT(user_id) DO NOTHING",int(fid),int(uid))
+async def remover_membro_frota(fid,uid): return await get_pool().execute("DELETE FROM membros_frota_marinha WHERE frota_id=$1 AND user_id=$2 AND cargo<>'Comandante'",int(fid),int(uid))
+async def definir_cargo_frota(fid,uid,cargo): return await get_pool().execute("UPDATE membros_frota_marinha SET cargo=$3 WHERE frota_id=$1 AND user_id=$2 AND cargo<>'Comandante'",int(fid),int(uid),str(cargo)[:40])
 
 # =========================================================
 # AKUMA NO MI — DROPS ESPONTÂNEOS EM ILHAS
