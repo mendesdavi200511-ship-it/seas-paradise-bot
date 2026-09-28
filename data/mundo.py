@@ -79,6 +79,7 @@ ILHAS_ESPECIAIS = {
     "Skypiea":{"inimigos":["Guerreiros celestes","Sacerdotes"],"bosses":["Sacerdote de Skypiea"],"segredos":["Poneglyph","Ruínas de Shandora"]},
     "Enies Lobby":{"inimigos":["Agentes do Governo","Marinha"],"bosses":["Agente CP9"],"segredos":["Instalações governamentais"]},
     "Sabaody Archipelago":{"inimigos":["Traficantes","Caçadores","Piratas"],"bosses":["Supernova Hostil"],"segredos":["Mercado clandestino","Revestimento naval"]},
+    "Dressrosa":{"inimigos":["Piratas Donquixote","Soldados do reino","Combatentes do Coliseu"],"bosses":["Diamante","Pica","Trebol","Donquixote Doflamingo"],"segredos":["Fábrica SMILE","Palácio Real","Green Bit"]},
     "Fish-Man Island":{"inimigos":["Criminosos submarinos"],"bosses":["Ameaça submarina"],"segredos":["Poneglyph"]},
     "Whole Cake Island":{"inimigos":["Forças de Totto Land"],"bosses":["Oficial de Totto Land"],"segredos":["Road Poneglyph"]},
     "Wano Country":{"inimigos":["Samurais hostis","Piratas"],"bosses":["Samurai Renegado"],"segredos":["Road Poneglyph","Ruínas antigas"]},
