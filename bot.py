@@ -85,6 +85,7 @@ class SeasParadiseBot(commands.Bot):
         # =================================================
 
         extensoes = [
+            "cogs.servidor",
             "cogs.personagem",
             "cogs.admin",
             "cogs.narrador",
@@ -92,8 +93,7 @@ class SeasParadiseBot(commands.Bot):
             "cogs.treinamento",
             "cogs.mundo",
             "cogs.finalizacao",
-            "cogs.progressao",
-            "cogs.servidor"
+            "cogs.progressao"
         ]
 
         for extensao in extensoes:
