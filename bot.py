@@ -284,6 +284,11 @@ async def on_command_error(
 
         return
 
+    # Checks de canal/cargo já enviam a mensagem correta no próprio check.
+    # Não transformar isso em falso "erro interno".
+    if isinstance(error, commands.CheckFailure) and not isinstance(error, commands.MissingPermissions):
+        return
+
     # =====================================================
     # SEM PERMISSÃO
     # =====================================================
