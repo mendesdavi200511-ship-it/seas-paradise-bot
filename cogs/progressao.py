@@ -29,6 +29,7 @@ AI_LIMIT=asyncio.Semaphore(max(2,int(os.getenv('BOSS_AI_CONCURRENCY','8'))))
 SEVERITY_FRACTIONS={'nenhum':0.0,'raspao':.03,'leve':.08,'solido':.16,'grave':.28,'critico':.45,'letal':1.0}
 COR_RP=discord.Color.from_rgb(245, 190, 35)
 
+# Caçadas canônicas exclusivas removidas: campanhas agora pertencem ao !iniciar universal.
 CHANNEL_ALIASES={
     'sabaody':'Sabaody Archipelago','sabaody-park':'Sabaody Archipelago','sabaody-park-rp':'Sabaody Archipelago',
     'vila-foosha':'Dawn Island','foosha':'Dawn Island','vila-syrup':'Syrup Village','ilhas-conomi':'Conomi Islands','arlong-park':'Conomi Islands',
@@ -36,9 +37,28 @@ CHANNEL_ALIASES={
 NON_LOCATION={'geral','general','chat','bate-papo','comandos','commands','fichas','ficha','regras','rules','off-topic','offtopic','anuncios','anúncios','logs','log','staff','admin','tickets'}
 
 def _fmt(n): return f"{int(n):,}".replace(',', '.')
+# Recompensas próprias dos Bosses de progressão.
+# Pontos são entregues ao jogador para distribuição livre; o sistema não escolhe atributos.
+# A escala considera o teto de 50.000 em cada um dos 3 atributos (150.000 no total).
+BOSS_REWARDS = {
+    'E':         {'berries': (3_000, 6_000),       'pontos': (150, 300),       'rep': (10, 20)},
+    'D':         {'berries': (6_000, 12_000),      'pontos': (300, 600),       'rep': (20, 40)},
+    'C':         {'berries': (12_000, 25_000),     'pontos': (600, 1_200),     'rep': (40, 80)},
+    'B':         {'berries': (25_000, 50_000),     'pontos': (1_200, 2_500),   'rep': (80, 150)},
+    'A':         {'berries': (50_000, 100_000),    'pontos': (2_500, 5_000),   'rep': (150, 300)},
+    'S':         {'berries': (100_000, 250_000),   'pontos': (5_000, 10_000),  'rep': (300, 600)},
+    'SS':        {'berries': (250_000, 500_000),   'pontos': (10_000, 18_000), 'rep': (600, 1_000)},
+    'LENDARIO':  {'berries': (500_000, 1_200_000), 'pontos': (18_000, 30_000), 'rep': (1_000, 2_000)},
+}
+
 def _reward(rank):
-    d=BOSS_RANKS[rank]
-    return {'berries':random.randint(d['berries'][0],d['berries'][1])//4,'pontos':max(1,random.randint(d['pontos'][0],d['pontos'][1])//6),'pct':1 if rank in ('A','S','SS','LENDARIO') and random.random()<.35 else 0,'rep':3+RANK_ORDER[rank]*4}
+    d = BOSS_REWARDS[rank]
+    return {
+        'berries': random.randint(*d['berries']),
+        'pontos': random.randint(*d['pontos']),
+        'pct': 1 if rank in ('A', 'S', 'SS', 'LENDARIO') and random.random() < .35 else 0,
+        'rep': random.randint(*d['rep']),
+    }
 
 def _clean_json(text):
     text=(text or '').strip(); text=re.sub(r'^```(?:json)?\s*|\s*```$','',text,flags=re.I|re.S).strip()
@@ -374,6 +394,8 @@ Responda SOMENTE JSON válido:
 
     async def _aplicar_cd(self,uid):
         await definir_cooldown(uid,'boss:progressao_global',datetime.now(timezone.utc)+timedelta(hours=BOSS_CD_HOURS))
+
+    # Progressão canônica ocorre exclusivamente dentro de !iniciar/!acao.
 
     @commands.command(name='bosses',aliases=['bosslocal','chefes'])
     async def bosses(self,ctx):

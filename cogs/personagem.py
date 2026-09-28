@@ -51,7 +51,9 @@ class FichaPoderesView(discord.ui.View):
             if str(x['categoria']).casefold()=='haki':
                 linhas.append(f"👁️ **{x['nome']} — {x['porcentagem']}% / ∞**")
                 for n,req,d in HAKIS.get(x['nome'],[]): linhas.append(f"{'✅' if x['porcentagem']>=req else '🔒'} **{n}** ({req}%) — {d}")
-        for f in await listar_formas(self.user_id): linhas.append(f"{'🔥' if f['ativa'] else '🔹'} **{f['nome']}** • F +{f['bonus_forca']}% • R +{f['bonus_resistencia']}% • V +{f['bonus_velocidade']}%")
+        fs=await listar_formas(self.user_id)
+        for f in fs: linhas.append(f"{'🔥 ATIVA' if f['ativa'] else '🔹'} **{f['nome']}** • F +{f['bonus_forca']}% • R +{f['bonus_resistencia']}% • V +{f['bonus_velocidade']}%")
+        if fs: linhas += ['', '🎮 **Comandos**', '`!forma ativar <nome>` — ativar', '`!forma desativar` — desativar', '`!forma listar` — listar formas']
         await interaction.response.send_message(embed=discord.Embed(title='✨ TRANSFORMAÇÕES & HAKI',description='\n'.join(linhas) or 'Nada desbloqueado.'),ephemeral=True)
     @discord.ui.button(label="Akuma no Mi",emoji="🍈",style=discord.ButtonStyle.secondary)
     async def akuma(self,interaction,button):
@@ -478,6 +480,15 @@ async def criar_embed_ficha(
         value=(f"**{akuma_atual}**" if akuma_atual not in (None, "", "Nenhuma") else "**Nenhuma**"),
         inline=False
     )
+
+    # Forma ativa precisa ficar visível na ficha principal, não escondida em !poderes.
+    forma_atual = next((f for f in await listar_formas(membro.id) if f['ativa']), None)
+    if forma_atual:
+        embed.add_field(
+            name="🔥 Transformação ativa",
+            value=f"**{forma_atual['nome']}**\n{forma_atual['capacidades'] or 'Forma atualmente ativada.'}",
+            inline=False
+        )
 
     # =====================================================
     # ATRIBUTOS

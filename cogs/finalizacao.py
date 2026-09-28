@@ -29,7 +29,9 @@ class PoderesView(discord.ui.View):
                 linhas.append(f"👁️ **{x['nome']} — {x['porcentagem']}% / ∞**")
                 for n,req,d in HAKIS.get(x['nome'],[]): linhas.append(f"{'✅' if x['porcentagem']>=req else '🔒'} {n} ({req}%) — {d}")
         fs=await listar_formas(self.uid)
-        for f in fs: linhas.append(f"{'🔥' if f['ativa'] else '🔹'} **{f['nome']}** — F +{f['bonus_forca']}% • R +{f['bonus_resistencia']}% • V +{f['bonus_velocidade']}%")
+        for f in fs: linhas.append(f"{'🔥 ATIVA' if f['ativa'] else '🔹'} **{f['nome']}** — F +{f['bonus_forca']}% • R +{f['bonus_resistencia']}% • V +{f['bonus_velocidade']}%")
+        if fs:
+            linhas += ['', '🎮 **Comandos**', '`!forma ativar <nome>` — ativa uma forma desbloqueada', '`!forma desativar` — volta à forma base', '`!forma listar` — mostra todas as formas']
         await i.response.edit_message(embed=discord.Embed(title='✨ TRANSFORMAÇÕES & HAKI',description='\n'.join(linhas) or 'Nada desbloqueado.'),view=self)
     @discord.ui.button(label='Akuma no Mi',emoji='🍈')
     async def akuma(self,i,b):
@@ -139,6 +141,25 @@ class GroupPanel(discord.ui.View):
         if not valid:return await i.response.send_message('❌ Não há outro membro para remover.',ephemeral=True)
         await i.response.send_message('Selecione o membro:',view=SelectActionView(MemberSelect(self.kind,self.owner_id,self.group_id,valid,'remove')),ephemeral=True)
 
+ORG_CONVITES = {
+    'pirata': [(500,'Baroque Works'),(1500,'Cross Guild'),(5000,'Shichibukai'),(12000,'Yonkou')],
+    'marinha': [(500,'Marinha'),(2500,'Cipher Pol')],
+    'revolucion': [(1000,'Exército Revolucionário')],
+}
+
+class ConviteOrganizacaoView(discord.ui.View):
+    def __init__(self,uid,org): super().__init__(timeout=300); self.uid=uid; self.org=org
+    async def interaction_check(self,i):
+        if i.user.id!=self.uid: await i.response.send_message('❌ Este convite pertence a outro personagem.',ephemeral=True); return False
+        return True
+    @discord.ui.button(label='Aceitar convite',emoji='✉️',style=discord.ButtonStyle.success)
+    async def aceitar(self,i,b):
+        rows=await listar_organizacoes(); o=next((x for x in rows if x['nome']==self.org),None)
+        if not o:return await i.response.send_message('❌ Organização indisponível.',ephemeral=True)
+        if await organizacao_user(self.uid):return await i.response.send_message('❌ Você já pertence a uma organização.',ephemeral=True)
+        await entrar_organizacao(o['id'],self.uid); b.disabled=True
+        await i.response.edit_message(content=f'🏛️ Convite aceito. Você entrou em **{self.org}**.',embed=None,view=self)
+
 class Finalizacao(commands.Cog):
     def __init__(self,bot): self.bot=bot; bot.add_check(self.prisao_check); self.relogio.start()
     def cog_unload(self): self.relogio.cancel(); self.bot.remove_check(self.prisao_check)
@@ -152,6 +173,29 @@ class Finalizacao(commands.Cog):
 
     @commands.command()
     async def poderes(self,ctx): await ctx.send(embed=discord.Embed(title='📚 PODERES',description='Use os botões para consultar Haki, transformações e Akuma no Mi.'),view=PoderesView(ctx.author.id))
+
+    @commands.group(name='forma', invoke_without_command=True)
+    async def forma(self,ctx):
+        fs=await listar_formas(ctx.author.id)
+        ativa=next((x for x in fs if x['ativa']),None)
+        txt='\n'.join(f"{'🔥' if x['ativa'] else '🔹'} **{x['nome']}**" for x in fs) or 'Nenhuma transformação desbloqueada.'
+        await ctx.send(embed=discord.Embed(title='✨ TRANSFORMAÇÕES',description=txt+'\n\n🎮 `!forma ativar <nome>`\n🌙 `!forma desativar`\n📋 `!forma listar`',color=COR_RP))
+
+    @forma.command(name='ativar')
+    async def forma_ativar(self,ctx,*,nome:str):
+        f=await ativar_forma(ctx.author.id,nome.strip())
+        if not f:return await ctx.send('❌ Forma não encontrada ou ainda não desbloqueada.')
+        await ctx.send(f"🔥 **{f['nome']}** ativada. A ficha agora exibirá essa transformação como ativa.")
+
+    @forma.command(name='desativar')
+    async def forma_desativar(self,ctx):
+        await desativar_forma(ctx.author.id); await ctx.send('🌙 Transformação desativada. Você voltou à forma base.')
+
+    @forma.command(name='listar')
+    async def forma_listar(self,ctx):
+        fs=await listar_formas(ctx.author.id)
+        txt='\n'.join(f"{'🔥 ATIVA' if x['ativa'] else '🔹'} **{x['nome']}**" for x in fs) or 'Nenhuma transformação desbloqueada.'
+        await ctx.send(embed=discord.Embed(title='✨ SUAS TRANSFORMAÇÕES',description=txt,color=COR_RP))
 
     @commands.command(name='procurar-akuma')
     async def procurar_akuma(self,ctx):
@@ -233,7 +277,18 @@ class Finalizacao(commands.Cog):
     @commands.command()
     async def organizacoes(self,ctx):
         await garantir_organizacoes(); org=await organizacao_user(ctx.author.id); rows=await listar_organizacoes(); txt='\n'.join(f"• **{x['nome']}** — {x['tipo']}" for x in rows)
-        await ctx.send(f"🏛️ **ORGANIZAÇÕES DO MUNDO**\n{txt}\n\nSua organização: **{org['nome']} ({org['cargo']})**" if org else f"🏛️ **ORGANIZAÇÕES DO MUNDO**\n{txt}\n\nVocê não pertence a uma organização.")
+        if org:return await ctx.send(f"🏛️ **ORGANIZAÇÕES DO MUNDO**\n{txt}\n\nSua organização: **{org['nome']} ({org['cargo']})**")
+        ficha=await buscar_ficha(ctx.author.id); fac=str(ficha['faccao'] or '').casefold() if ficha else ''; rep=int(ficha['reputacao'] or 0) if ficha else 0
+        chave='marinha' if 'marinha' in fac else ('revolucion' if 'revol' in fac else 'pirata')
+        eleg=[(req,n) for req,n in ORG_CONVITES[chave] if rep>=req]
+        convite=eleg[-1][1] if eleg else None
+        msg=f"🏛️ **ORGANIZAÇÕES DO MUNDO**\n{txt}\n\nVocê não pertence a uma organização.\n⭐ Reputação: **{rep}**"
+        if convite:
+            msg+=f"\n\n✉️ Sua reputação chamou atenção de **{convite}**. Você recebeu um convite."
+            return await ctx.send(msg,view=ConviteOrganizacaoView(ctx.author.id,convite))
+        prox=next(((r,n) for r,n in ORG_CONVITES[chave] if rep<r),None)
+        if prox: msg+=f"\n🔒 Próximo convite possível: **{prox[1]}** a partir de **{prox[0]} reputação**."
+        await ctx.send(msg)
 
     @commands.command()
     @commands.has_permissions(administrator=True)

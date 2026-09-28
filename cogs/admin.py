@@ -12,6 +12,7 @@ from database.database import (
     adicionar_reputacao,
     buscar_especializacoes,
     definir_rank_manual,
+    garantir_organizacoes, listar_organizacoes, definir_organizacao_admin,
 )
 
 from data.classes import CLASSES
@@ -1166,6 +1167,24 @@ class EspecializacoesAdminView(
 # PAINEL PRINCIPAL ADMIN
 # =========================================================
 
+class OrganizacaoAdminSelect(discord.ui.Select):
+    def __init__(self,membro,rows):
+        self.membro=membro
+        opts=[discord.SelectOption(label=x['nome'][:100],value=str(x['id']),description=str(x['tipo'])[:100]) for x in rows[:25]]
+        super().__init__(placeholder='Escolha a organização do personagem',options=opts)
+    async def callback(self,interaction):
+        oid=int(self.values[0]); await definir_organizacao_admin(oid,self.membro.id)
+        rows=await listar_organizacoes(); org=next((x for x in rows if int(x['id'])==oid),None)
+        await interaction.response.send_message(f"🏛️ {self.membro.mention} foi definido em **{org['nome']}**.",ephemeral=True)
+
+class OrganizacaoAdminView(discord.ui.View):
+    def __init__(self,dono_id,membro,rows):
+        super().__init__(timeout=300); self.dono_id=dono_id; self.add_item(OrganizacaoAdminSelect(membro,rows))
+    async def interaction_check(self,interaction):
+        if interaction.user.id!=self.dono_id or not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message('❌ Sem permissão.',ephemeral=True); return False
+        return True
+
 class AdminView(
     discord.ui.View
 ):
@@ -1317,6 +1336,11 @@ class AdminView(
             embed=discord.Embed(title="🏆 EDITAR RANK", description=f"Escolha o Rank de {self.membro.mention}. Use **Automático** para voltar ao Rank calculado pela reputação."),
             view=RankAdminView(self.dono_id,self.membro)
         )
+
+    @discord.ui.button(label="Organização",emoji="🏛️",style=discord.ButtonStyle.secondary,row=3)
+    async def organizacao(self,interaction,button):
+        await garantir_organizacoes(); rows=await listar_organizacoes()
+        await interaction.response.edit_message(embed=discord.Embed(title='🏛️ DEFINIR ORGANIZAÇÃO',description=f'Escolha a organização de {self.membro.mention}.'),view=OrganizacaoAdminView(self.dono_id,self.membro,rows))
 
     @discord.ui.button(
         label="Atualizar",

@@ -10,6 +10,7 @@ from openai import AsyncOpenAI
 from database.database import buscar_viagem_ativa, buscar_treinamento_ativo, listar_subordinados, evento_ativo_usuario, forma_ativa
 from cogs.npc_profiles import NPC_PROFILES, get_profile, profile_for_narrator, format_profile_for_narrator
 from data.mundo import BOSS_RANKS
+from data.campanhas import contexto_campanha, campanha_da_ilha
 from data.navegacao import normalizar_destino
 from data.combat_rules import COMBAT_LOGIC_RULES
 from database.database import get_pool, adicionar_pontos_atributo, adicionar_pontos_percentuais, adicionar_berries, adicionar_reputacao
@@ -54,6 +55,7 @@ from database.database import (
     avancar_rodada_combate, encerrar_combate_sessao, atualizar_estado_cena_sessao,
     buscar_evento_por_thread, status_participacao_evento, participar_evento_global, buscar_sessao_por_id,
     registrar_prisao, buscar_prisao_ativa, libertar_prisao, expulsar_faccao, buscar_edicao_jornal_24h,
+    listar_progresso_campanha, registrar_boss_campanha, definir_campanha_sessao,
 )
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -1353,6 +1355,11 @@ Responda SOMENTE JSON válido, sem markdown, neste formato:
         historico_sessao = await self.historico_compartilhado_sessao(sessao_id)
         sessao_atual = await buscar_sessao_por_id(sessao_id)
         estado_cena_atual = (sessao_atual["estado_cena"] if sessao_atual and "estado_cena" in sessao_atual and sessao_atual["estado_cena"] else "Ainda não consolidado.")
+        progresso_camp = await listar_progresso_campanha(ctx.author.id, sessao_atual["localizacao"]) if sessao_atual and sessao_atual["localizacao"] else []
+        camp, proximo_camp, trilha_camp = contexto_campanha(sessao_atual["localizacao"], [x["npc_nome"] for x in progresso_camp]) if sessao_atual and sessao_atual["localizacao"] else ({},None,"Sem campanha local.")
+        campanha_txt = (f"Local: {camp.get('local')} | Região: {camp.get('regiao')} | Perigo: {camp.get('perigo')}\n"
+                        f"Ameaças: {', '.join(camp.get('inimigos', []))}\nSegredos: {', '.join(camp.get('segredos', []))}\n"
+                        f"Progressão marcante:\n{trilha_camp}\nPróximo marco possível: {(proximo_camp or {}).get('nome','campanha emergente')}")
         notoriedade = await buscar_notoriedade_personagem(ficha["nome"])
         notoriedade_txt = (
             f"Impacto={notoriedade['impacto_total']}; Marinha={notoriedade['atencao_marinha']}; "
@@ -1370,6 +1377,10 @@ CANAL/LOCAL DA CENA NO DISCORD
 
 ESTADO PERSISTENTE DO MUNDO
 {mundo}
+
+CAMPANHA UNIVERSAL DA LOCALIZAÇÃO
+{campanha_txt}
+REGRA: isto orienta a progressão, mas não teleporta o jogador até chefes. O jogador precisa descobrir, investigar, atravessar obstáculos e chegar causalmente ao encontro. Um marco posterior não aparece antes dos anteriores quando houver cadeia pendente. O mundo continua reagindo livremente: aliados, facções, reputação, crimes, mortes, destruição, domínio e decisões podem alterar como a campanha acontece.
 
 NOTORIEDADE HISTÓRICA DESTE PERSONAGEM
 {notoriedade_txt}
@@ -1429,6 +1440,7 @@ REGRA DE TAMANHO DA RESPOSTA
 - Não invente atributos numéricos ausentes. Se faltarem pontos do NPC, não fabrique números; porém use o PERFIL CANÔNICO para reconhecer diferenças qualitativas óbvias de poder.
 - Um player iniciante não recebe "chance dramática" gratuita contra um NPC de elite. Se velocidade, experiência, poderes e contexto tornam o ataque claramente inviável, resolva isso com naturalidade e dê ao NPC uma reação coerente — inclusive ofensiva.
 - Antes de narrar um personagem canônico, cheque mentalmente: poderes, estilo de luta, arma, veículo, personalidade, objetivo atual e recursos confirmados no PERFIL CANÔNICO. Não substitua esses elementos por genéricos.
+- AKUMA NO MI É UNIVERSAL: use exatamente a fruta registrada na ficha e o domínio real listado em ESPECIALIZAÇÕES. Técnicas desbloqueadas podem alterar causalmente espaço, matéria, corpo, elemento ou mobilidade; não reduza uma técnica válida a um ataque físico genérico. Nunca conceda técnica acima do domínio. Esta regra vale para QUALQUER fruta cadastrada, sem exceções especiais para Ope Ope.
 - Se os fatos mecânicos e a situação tornarem um golpe realmente letal, morte é uma consequência permitida tanto para player quanto para NPC; ninguém tem plot armor.
 - NPC hostil pode iniciar força letal e tentar matar o player quando isso combina com sua intenção, personalidade e situação. Não o faça lutar eternamente de modo defensivo ou misericordioso sem razão.
 - Se um NPC for esmagadoramente superior e tiver intenção letal, não prolongue artificialmente a luta: uma abertura pode resultar em ferimento crítico, incapacitação ou morte conforme os fatos da cena.
@@ -1717,11 +1729,24 @@ REGRA DE TAMANHO DA RESPOSTA
                         ganhou=await get_pool().fetchrow(
                             "INSERT INTO recompensas_npc_marcante(user_id,npc_nome,instancia) VALUES($1,$2,'mundo') ON CONFLICT DO NOTHING RETURNING user_id",uid,npc_nome)
                         if not ganhou: continue
-                        berries=max(500,cfg['berries'][0]//3); pontos=max(1,cfg['pontos'][0]//8); rep=4+list(BOSS_RANKS).index(rank)*4
+                        # Boss marcante dentro de !iniciar usa recompensa digna da escala de 50k/atributo.
+                        # Uma única vitória por personagem/NPC impede farm.
+                        faixas={
+                            'E':((3000,6000),(150,300),(10,20)),'D':((6000,12000),(300,600),(20,40)),
+                            'C':((12000,25000),(600,1200),(40,80)),'B':((25000,50000),(1200,2500),(80,150)),
+                            'A':((50000,100000),(2500,5000),(150,300)),'S':((100000,250000),(5000,10000),(300,600)),
+                            'SS':((250000,500000),(10000,18000),(600,1000)),'LENDARIO':((500000,1200000),(18000,30000),(1000,2000))}
+                        import random as _random
+                        fb,fp,fr=faixas[rank]; berries=_random.randint(*fb); pontos=_random.randint(*fp); rep=_random.randint(*fr)
                         await adicionar_berries(uid,berries); await adicionar_pontos_atributo(uid,pontos); await adicionar_reputacao(uid,rep)
+                        local_camp=sessao['localizacao'] if sessao and sessao['localizacao'] else 'Mundo'
+                        await registrar_boss_campanha(uid,local_camp,npc_nome,rank)
                         try:
                             membro=ctx.guild.get_member(uid) if ctx.guild else None
-                            await ctx.send(f"🏆 **NPC MARCANTE DERROTADO — {npc_nome}**\n{membro.mention if membro else pp['personagem_nome']}: ฿ {berries:,} • +{pontos} pontos • +{rep} reputação".replace(',', '.'))
+                            progresso_novo=await listar_progresso_campanha(uid,local_camp)
+                            _camp,_prox,_trilha=contexto_campanha(local_camp,[x['npc_nome'] for x in progresso_novo])
+                            prox_txt=f"\n🔓 Próximo marco da campanha: **{_prox['nome']}**" if _prox else "\n🌍 Os marcos fixos desta campanha foram concluídos; o mundo continua aberto às consequências."
+                            await ctx.send((f"🏆 **NPC MARCANTE DERROTADO — {npc_nome}**\n{membro.mention if membro else pp['personagem_nome']}: ฿ {berries:,} • +{pontos} pontos • +{rep} reputação"+prox_txt).replace(',', '.'))
                         except Exception: pass
 
             try:
@@ -1838,10 +1863,14 @@ REGRA DE TAMANHO DA RESPOSTA
         if qtd<1: await ctx.send("❌ Informe pelo menos 1 jogador."); return
         local=estado["localizacao"] if estado else local_canal; area=estado["area"] if estado and estado["area"] else None
         s=await obter_ou_criar_sessao(getattr(ctx.guild,"id",None),ctx.channel.id,local,area)
+        s=await definir_campanha_sessao(s["id"], local)
         s=await configurar_sessao_narracao(s["id"],qtd); await entrar_sessao(s["id"],ctx.author.id,ficha["nome"])
+        prog=await listar_progresso_campanha(ctx.author.id,local)
+        camp,proximo,trilha=contexto_campanha(local,[x['npc_nome'] for x in prog])
         if qtd==1:
             await marcar_sessao_iniciada(s["id"])
-            await ctx.send(f"▶️ **NARRAÇÃO INICIADA — SOLO**\n📍 {local}\nUse `!acao`. Para terminar a aventura, `!encerrar`.")
+            marco=f"\n🎯 Marco atual: **{proximo['nome']}**" if proximo else "\n🌍 Campanha emergente: explore e faça o mundo reagir às suas decisões."
+            await ctx.send(f"▶️ **CAMPANHA INICIADA — SOLO**\n📍 {local}{marco}\nUse `!acao`. Combates nascem dentro da própria campanha e continuam pelo mesmo narrador. Para terminar, `!encerrar`.")
         else:
             await ctx.send(f"🎭 **Sessão para {qtd} jogadores criada.**\n✅ {ficha['nome']} — **1/{qtd}**\nOs demais usam `!entrar`. Ao chegar em {qtd}/{qtd}, começa automaticamente.")
 
