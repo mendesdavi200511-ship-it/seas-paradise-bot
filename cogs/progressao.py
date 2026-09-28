@@ -13,6 +13,7 @@ from database.database import *
 from data.mundo import BOSS_RANKS
 from data.navegacao import normalizar_destino, LOCAIS
 from data.combat_rules import COMBAT_LOGIC_RULES
+from data.poderes import skills_akuma
 
 RANK_ORDER={'E':0,'D':1,'C':2,'B':3,'A':4,'S':5,'SS':6,'LENDARIO':7}
 RANK_LABEL={'E':'Iniciante','D':'Baixo','C':'Intermediário','B':'Experiente','A':'Elite','S':'Monstruoso','SS':'Extremo','LENDARIO':'Lendário'}
@@ -116,23 +117,94 @@ class Progressao(commands.Cog):
         return (f"{ficha['nome']} e {boss} estão conscientes, livres e em distância de combate neutra. "
                 "Nenhum agarrão, ferimento, cobertura, arma preparada ou vantagem posicional foi estabelecido ainda.")
 
+    def _dominio_akuma(self, ficha, esp):
+        nome=str(ficha['akuma'] or '').strip()
+        if not nome or nome.casefold() in ('nenhuma','nenhum','não possui','nao possui'):
+            return None, 0, []
+        pct=0
+        for x in esp:
+            if str(x['categoria']).casefold() in ('akuma','akuma no mi') and str(x['nome']).casefold()==nome.casefold():
+                pct=max(pct,int(x['porcentagem'] or 0))
+        _, skills=skills_akuma(nome)
+        return nome,pct,list(skills)
+
+    def _capacidades_akuma(self, ficha, esp):
+        nome,pct,skills=self._dominio_akuma(ficha,esp)
+        if not nome:return 'Nenhuma Akuma no Mi registrada.'
+        liberadas=[f"{n} ({req}%) — {d}" for req,n,d in skills if int(req)<=pct]
+        bloqueadas=[f"{n} exige {req}%" for req,n,d in skills if int(req)>pct]
+        return (f"{nome}: domínio atual {pct}%. TÉCNICAS LIBERADAS: " + ('; '.join(liberadas) or 'nenhuma') +
+                ". TÉCNICAS BLOQUEADAS: " + ('; '.join(bloqueadas) or 'nenhuma') +
+                ". É PROIBIDO executar ou conceder efeito de técnica bloqueada, mesmo que o jogador a descreva como concluída.")
+
+    def _tecnicas_akuma_na_acao(self, acao, ficha, esp):
+        nome,pct,skills=self._dominio_akuma(ficha,esp)
+        if not nome:return []
+        texto=(acao or '').casefold(); encontradas=[]
+        for req,n,d in skills:
+            aliases={str(n).casefold()}
+            if 'kroom' in str(n).casefold():aliases.update(('kroom','r-room','rroom'))
+            if any(alias in texto for alias in aliases):
+                encontradas.append({'nome':str(n),'req':int(req),'descricao':str(d),'liberada':int(req)<=pct})
+        return encontradas
+
+    def _validar_resolucao_tecnicas(self,out,tecnicas):
+        esperadas=[t['nome'] for t in tecnicas if t['liberada']]
+        if not esperadas:return True
+        etapas=out.get('etapas_resolvidas') or []
+        if isinstance(etapas,str):etapas=[etapas]
+        texto=' | '.join(str(x) for x in etapas).casefold()
+        return all(nome.casefold() in texto for nome in esperadas)
+
+    def _tecnicas_bloqueadas_na_acao(self, acao, ficha, esp):
+        nome,pct,skills=self._dominio_akuma(ficha,esp)
+        if not nome:return []
+        texto=(acao or '').casefold()
+        achadas=[]
+        for req,n,d in skills:
+            if int(req)<=pct:continue
+            nomes={str(n).casefold()}
+            # técnicas despertadas podem aparecer abreviadas na ação
+            if 'kroom' in str(n).casefold(): nomes.update(('kroom','r-room','rroom'))
+            if any(alias in texto for alias in nomes): achadas.append((int(req),str(n)))
+        return achadas
+
+    def _resolver_tecnica_bloqueada(self, acao, ficha, esp, boss):
+        bloqueadas=self._tecnicas_bloqueadas_na_acao(acao,ficha,esp)
+        if not bloqueadas:return None
+        nome,pct,skills=self._dominio_akuma(ficha,esp)
+        estado=(boss['estado_contexto'] or self._estado_inicial(ficha,boss['boss_nome'])).strip()
+        # Técnicas válidas anteriores na mesma cadeia ainda podem acontecer; no caso da Ope, ROOM 0% pode ser criado.
+        room_liberado = nome.casefold()=='ope ope no mi' and 'room' in (acao or '').casefold() and pct>=0
+        bloqueio=', '.join(f'{n} ({req}%)' for req,n in bloqueadas)
+        if room_liberado:
+            narr=(f"O ROOM se estabelece ao redor da área, mas a sequência para ali: {bloqueio} ainda não responde ao domínio atual da fruta. "
+                  f"A troca de posições, o corte espacial e a imobilização pretendidos não acontecem; a situação física entre os dois permanece como estava antes da tentativa.")
+            novo=estado + " ROOM da Ope Ope no Mi está ativo na área; nenhuma técnica acima do domínio atual foi executada."
+        else:
+            narr=(f"A técnica não se manifesta: {bloqueio} ainda não foi dominada. Nenhum efeito dela é aplicado ao adversário, e a posição física anterior permanece válida.")
+            novo=estado
+        return {'narracao':narr,'novo_estado':novo,'desfecho':'continua','resumo_turno':f'Tentativa de técnica bloqueada ({bloqueio}); nenhum efeito bloqueado foi aplicado.'}
+
     async def _resolver_troca(self,acao,ficha,esp,boss,stats):
         dominios='; '.join(f"{x['categoria']}:{x['nome']}={x['porcentagem']}%" for x in esp) or 'nenhum'
+        akuma_caps=self._capacidades_akuma(ficha,esp)
+        tecnicas_acao=self._tecnicas_akuma_na_acao(acao,ficha,esp)
+        tecnicas_exec='; '.join(f"{t['nome']} ({'LIBERADA' if t['liberada'] else 'BLOQUEADA'}, exige {t['req']}%) — {t['descricao']}" for t in tecnicas_acao) or 'nenhuma técnica nomeada detectada'
         forma=(f"{stats['forma']['nome']} — {stats['forma']['capacidades']}" if stats['forma'] else 'nenhuma')
         estado=boss['estado_contexto'] or self._estado_inicial(ficha,boss['boss_nome'])
         hist=boss['historico_contexto'] or 'Nenhuma troca anterior.'
-        bf=int(boss['boss_forca'] or BOSS_RANKS[boss['rank']]['attr']); br=int(boss['boss_resistencia'] or BOSS_RANKS[boss['rank']]['attr']); bv=int(boss['boss_velocidade'] or BOSS_RANKS[boss['rank']]['attr'])
         prompt=f'''Você é o ÁRBITRO DE COMBATE do Sea's Paradise. Resolva UMA troca viva e causal. Não seja um gerador de acerto aleatório.
 
 {COMBAT_LOGIC_RULES}
 
 PLAYER: {ficha['nome']}
-Força={stats['forca']} | Resistência={stats['resistencia']} | Velocidade={stats['velocidade']}
 Akuma={ficha['akuma']} | Forma={forma}
-Domínios/capacidades registradas: {dominios}
+Domínios registrados: {dominios}
+CAPACIDADES DA AKUMA (AUTORITATIVO): {akuma_caps}
+TÉCNICAS CITADAS NESTA AÇÃO (AUTORITATIVO): {tecnicas_exec}
 
-BOSS: {boss['boss_nome']} | Rank={boss['rank']} | perfil={boss['boss_estilo'] or 'combatente equilibrado'}
-Força={bf} | Resistência={br} | Velocidade={bv}
+BOSS: {boss['boss_nome']} | Rank={boss['rank']} | perfil de combate={boss['boss_estilo'] or 'combatente equilibrado'}
 
 ESTADO FÍSICO AUTORITATIVO ANTES DA AÇÃO:
 {estado}
@@ -147,13 +219,13 @@ TAREFA:
 1. Separe o que o player EXECUTA do resultado que ele tentou impor. Preserve agência, mas não aceite "acertei", "não tomei dano", "ele não consegue" como fato.
 2. Resolva em ordem causal todas as etapas realmente executadas. Use o estado anterior. Se uma etapa depende de outra e a anterior falha, respeite isso.
 3. Decida a reação do Boss somente com movimentos possíveis no estado atual e capacidades plausíveis. Ele pode atacar, defender, escapar, agarrar, usar terreno etc.
-4. Atributos pesam, mas LÓGICA vem primeiro. Explique concretamente como uma diferença de atributo permitiu uma reação; não use rank como trava.
+4. NÃO USE ATRIBUTOS NUMÉRICOS PARA ARBITRAR ESTA LUTA. Força, Resistência e Velocidade existem na ficha/progressão, mas NÃO entram como placar, comparação ou justificativa de sucesso nesta narração. Resolva pelo que está concretamente estabelecido: posição, distância, postura, arma, trajetória, técnica/poder realmente disponível, ferimentos, preparação, terreno e tempo de reação criado pela própria cena.
 5. NÃO use HP, barra de vida, pontos de condição nem dano numérico. Ferimentos existem somente como fatos narrativos persistentes no estado (ex.: corte no braço, perna quebrada, inconsciente, morto).
 6. Um tiro, lâmina, impacto ou poder deve ser resolvido pela cadeia causal concreta: alcance, trajetória, reação possível, proteção, natureza do ataque e capacidades relevantes. Rank/status sozinho nunca decide acerto, defesa ou sobrevivência.
 7. Produza NOVO ESTADO concreto para o próximo turno: distância, postura, agarrões, armas em mãos/no chão, cobertura, ferimentos e vantagens. Não apague fatos sem resolvê-los.
 8. A resposta ao jogador deve ser SOMENTE a continuação narrativa da luta, em texto corrido. Não repita, cite, resuma nem reformule a ação que ele acabou de escrever. Comece diretamente pela consequência/reação que vem depois dela.
 9. Não use cabeçalhos, "Turno X", separadores, tópicos, emojis, campos técnicos, explicações de regra ou frases metalinguísticas. Escreva como um narrador de RPG reagindo ao jogador.
-10. A troca precisa ANDAR. Decida concretamente o que acontece com base na causalidade. Não deixe a cena artificialmente "em aberto" só por cautela. Se houver base para acerto, erro, esquiva, bloqueio, ferimento, desarme, queda, incapacidade ou morte, narre isso. Se algo for incerto, escolha a consequência mais coerente com o estado e capacidades.
+10. A troca precisa ANDAR. Decida concretamente o que acontece com base na causalidade. Não deixe a cena artificialmente "em aberto" só por cautela. Se houver base para acerto, erro, esquiva, bloqueio, ferimento, desarme, queda, incapacidade ou morte, narre isso. Se algo for incerto, escolha a consequência mais coerente com o estado e capacidades concretamente demonstradas na cena — nunca por números de atributo.
 11. O Boss deve lutar de verdade: reagir, atacar, pressionar, aproveitar aberturas e sofrer consequências quando cabível. Sem plot armor para nenhum lado.
 12. REGRA DE CONSERVAÇÃO DO ESTADO: antes de escrever cada detalhe, confira se ele já existe em ESTADO FÍSICO AUTORITATIVO ou acabou de ser causado nesta troca. É proibido inventar ferimento anterior, desequilíbrio anterior, arma/posição/cobertura não registradas.
 13. REGRA DE ECONOMIA DE REAÇÃO: não transforme a reação do Boss numa sequência perfeita de várias ações. Uma esquiva não concede automaticamente agarrão + contra-ataque. Cada etapa precisa caber no mesmo intervalo e ser causalmente possível.
@@ -164,17 +236,28 @@ TAREFA:
 18. NÃO PROLONGUE A LUTA ARTIFICIALMENTE. Se o estado anterior + a ação executável deixam o Boss sem defesa causal plausível diante de um golpe incapacitante/letal, resolva a derrota. Boss Rank não possui imunidade narrativa nem direito a uma defesa por turno.
 19. NÃO REPITA A TROCA ANTERIOR. Compare com HISTÓRICO RECENTE. Uma nova ação precisa produzir uma nova consequência. É proibido reciclar a mesma esquiva, a mesma disputa de arma ou praticamente o mesmo texto/estado só para manter o Boss vivo.
 20. Se o Boss já está caído, imobilizado, inconsciente, gravemente comprometido ou sem acesso ao recurso necessário para reagir, trate isso como limitação REAL. Ele só recupera posição se houver tempo e ação causal para isso.
+21. NÃO INVENTE 'REAÇÃO SUPERIOR' POR ARQUÉTIPO. Nomes como Caçador Veloz, Veterano ou Lutador Brutal descrevem estilo, não concedem iniciativa automática, reflexos sobrenaturais, esquiva garantida ou resistência extra.
+22. CONTINUIDADE É O ÁRBITRO. Se uma troca anterior já gastou a defesa, derrubou, comprometeu apoio, deixou a arma alinhada ou criou uma abertura, a próxima resolução começa DESSA consequência. Não reinicie a disputa do zero para salvar o Boss.
+23. PODER NÃO LIBERADO NÃO EXISTE COMO RECURSO DE COMBATE. Só técnicas explicitamente liberadas em CAPACIDADES DA AKUMA podem produzir efeito. Se o jogador citar uma técnica bloqueada ou inventada, não a execute nem improvise um efeito equivalente.
+24. DERROTA É UM ESTADO NORMAL. Quando a cadeia causal fecha uma consequência incapacitante ou letal sem defesa ainda disponível, encerre imediatamente com boss_derrotado. Não crie uma nova defesa só porque ainda há um próximo turno possível.
+25. TÉCNICA LIBERADA CITADA NÃO PODE SUMIR. Resolva explicitamente, em ordem causal, cada técnica marcada LIBERADA em TÉCNICAS CITADAS NESTA AÇÃO. Ela pode funcionar, falhar ou funcionar parcialmente, mas precisa ser arbitrada.
+26. PODER ALTERA A TROCA. Não reduza ROOM, Shambles, Amputate ou outra técnica válida a tiro/soco/esquiva genérica. Aplique a natureza cadastrada da técnica antes de decidir a reação seguinte.
+27. REAÇÃO AO PODER EXIGE RECURSO CONCRETO. Não invente imunidade, previsão, reflexo sobrenatural ou conhecimento da fruta. Se uma técnica válida já alterou posição, arma ou apoio, o Boss reage a partir desse NOVO estado.
+28. Preencha etapas_resolvidas com UMA entrada para cada técnica liberada citada, registrando o resultado causal. Esse campo é interno e não aparece ao jogador.
 
 Responda SOMENTE JSON válido:
 {{
  "narracao":"continuação narrativa pronta para ser enviada ao player; texto corrido, sem repetir a ação declarada",
  "novo_estado":"estado físico completo e autoritativo após a troca, incluindo distância, postura, armas, ferimentos, incapacidades e vantagens",
  "desfecho":"continua|boss_derrotado|player_derrotado",
- "resumo_turno":"uma frase factual para memória interna"
+ "resumo_turno":"uma frase factual para memória interna",
+ "etapas_resolvidas":["ROOM: resultado","Shambles: resultado","Amputate: resultado"]
 }}'''
         async with AI_LIMIT:
             r=await self.client.responses.create(model=os.getenv('BOSS_AI_MODEL','gpt-5.6-terra'),input=prompt,max_output_tokens=1000)
         out=_clean_json(r.output_text)
+        if not self._validar_resolucao_tecnicas(out,tecnicas_acao):
+            raise ValueError('A IA ignorou uma ou mais técnicas liberadas citadas na ação.')
         desfecho=str(out.get('desfecho','continua')).casefold().strip()
         if desfecho not in ('continua','boss_derrotado','player_derrotado'):desfecho='continua'
         out['desfecho']=desfecho
@@ -188,7 +271,7 @@ Responda SOMENTE JSON válido:
                 if tentativa < 2:
                     out=await asyncio.wait_for(self._resolver_troca(acao,ficha,esp,boss,stats), timeout=50)
                 else:
-                    out=await asyncio.wait_for(self._fallback_troca(acao,ficha,boss,stats), timeout=50)
+                    out=await asyncio.wait_for(self._fallback_troca(acao,ficha,esp,boss,stats), timeout=50)
                 if out and out.get('narracao') and out.get('novo_estado'):
                     return out
             except Exception as ex:
@@ -196,6 +279,9 @@ Responda SOMENTE JSON válido:
                 print(f"⚠️ Boss tentativa {tentativa+1}/3 falhou: {erros[-1]}")
             if tentativa < 3:
                 await asyncio.sleep(.8)
+        tecnicas=self._tecnicas_akuma_na_acao(acao,ficha,esp)
+        if any(t['liberada'] for t in tecnicas):
+            raise RuntimeError('Falha de IA ao resolver técnica especial; turno preservado para não inventar uma resolução genérica.')
         print('⚠️ API do Boss indisponível; usando resolução local de contingência.')
         return self._fallback_local(acao,ficha,boss,stats)
 
@@ -247,24 +333,34 @@ Responda SOMENTE JSON válido:
             novo=f"{boss_nome} cedeu terreno e não repetiu a defesa anterior. {player} possui iniciativa momentânea. Estado preservado: {_clip(estado,550)}"
         return {'narracao':narr,'novo_estado':novo,'desfecho':'continua','resumo_turno':narr[:300]}
 
-    async def _fallback_troca(self, acao, ficha, boss, stats):
+    async def _fallback_troca(self, acao, ficha, esp, boss, stats):
         """Segunda tentativa curta: nunca devolve o manual interno ao jogador."""
         estado=boss['estado_contexto'] or self._estado_inicial(ficha,boss['boss_nome'])
+        hist=boss['historico_contexto'] or 'Nenhuma troca anterior.'
+        caps=self._capacidades_akuma(ficha,esp)
+        tecnicas=self._tecnicas_akuma_na_acao(acao,ficha,esp)
+        tecnicas_txt='; '.join(f"{t['nome']} ({'LIBERADA' if t['liberada'] else 'BLOQUEADA'}) — {t['descricao']}" for t in tecnicas) or 'nenhuma'
         prompt=f'''Continue esta luta de RPG em UMA resposta narrativa curta e concreta.
 
 Player: {ficha['nome']}
 Boss: {boss['boss_nome']} — {boss['boss_estilo'] or 'combatente'}
 Estado atual: {estado}
+Histórico recente: {hist}
+Capacidades da Akuma: {caps}
+Técnicas citadas: {tecnicas_txt}
 Ação declarada pelo player: {acao}
 
 Resolva a consequência pela lógica física da cena. O Boss pode reagir e contra-atacar. Não use HP. Não use rank/status como sentença automática. Não repita a ação do player. Não explique regras. Não use cabeçalho, tópicos ou emojis. Faça a luta avançar. Não prolongue o Boss artificialmente: se ele ficou causalmente sem defesa diante de consequência incapacitante/letal, marque boss_derrotado. Não repita a troca anterior nem recicle a mesma defesa. Termine em ponto de próxima ação apenas se a luta realmente continuar.
+Para CADA técnica LIBERADA citada, resolva a tentativa em ordem e registre em etapas_resolvidas. Não transforme poder sobrenatural em ataque físico genérico. A reação do Boss só ocorre depois dos efeitos anteriores que realmente aconteceram.
 
 Responda SOMENTE JSON válido:
-{{"narracao":"texto corrido para o jogador","novo_estado":"estado físico completo depois da troca","desfecho":"continua|boss_derrotado|player_derrotado","resumo_turno":"memória factual curta"}}'''
+{{"narracao":"texto corrido para o jogador","novo_estado":"estado físico completo depois da troca","desfecho":"continua|boss_derrotado|player_derrotado","resumo_turno":"memória factual curta","etapas_resolvidas":["técnica: resultado"]}}'''
         try:
             async with AI_LIMIT:
                 r=await self.client.responses.create(model=os.getenv('BOSS_AI_MODEL','gpt-5.6-terra'),input=prompt,max_output_tokens=800)
             out=_clean_json(r.output_text)
+            if not self._validar_resolucao_tecnicas(out,tecnicas):
+                raise ValueError('Fallback ignorou técnica liberada citada.')
             if out.get('narracao'):
                 d=str(out.get('desfecho','continua')).casefold().strip()
                 out['desfecho']=d if d in ('continua','boss_derrotado','player_derrotado') else 'continua'
@@ -341,7 +437,9 @@ Responda SOMENTE JSON válido:
             if updates:
                 q='UPDATE bosses_rp_ativos SET '+','.join(updates)+' WHERE id=$1 RETURNING *'; b=await get_pool().fetchrow(q,b['id'],*vals)
             try:
-                out=await self._resolver_com_retentativas(acao,ficha,esp,b,stats)
+                out=self._resolver_tecnica_bloqueada(acao,ficha,esp,b)
+                if out is None:
+                    out=await self._resolver_com_retentativas(acao,ficha,esp,b,stats)
             except Exception as ex:
                 print(f'❌ Boss não resolvido após retentativas: {type(ex).__name__}: {ex}')
                 return await ctx.send('⚠️ O narrador automático teve uma falha temporária. **Sua ação e o turno não foram consumidos.** Tente novamente em alguns segundos.')
