@@ -14,7 +14,7 @@ CRIAR_ID = 1551379201939218502
 FICHAS_ID = 1554178079725981869
 MESTRE_ROLE_ID = 1541858353196695632
 AUTO_ROLES = [1542161384039776366,1542161683739574392,1542161421402644580,1542161536016064544,1542161469817491498,1542161789960192101,1542161738517192796,1541858736241647787,1542161091227029516,1542161193358074026,1542161337667289119]
-WELCOME_GIF = None
+WELCOME_GIF = "https://tenor.com/bGup1.gif"
 SEM_PERSONAGEM_ROLE_ID = 1542161193358074026
 COM_PERSONAGEM_ROLE_ID = 1542161144691564666
 
@@ -226,9 +226,11 @@ class Servidor(commands.Cog):
                              "📜 Leia as regras e siga para a criação do personagem. **A aventura começa agora.**"),
                 color=discord.Color.gold())
             e.set_thumbnail(url=member.display_avatar.url)
-            # GIF direto (não página tenor.com): evita o placeholder de imagem quebrada do Discord.
-            e.set_image(url="https://media.tenor.com/0AVbKGY_MxMAAAAC/one-piece-luffy.gif")
+            # O GIF pedido é uma página do Tenor, não um arquivo de imagem direto.
+            # Enviá-lo como mensagem separada permite ao próprio Discord/Tenor montar o preview correto.
             e.set_footer(text=f"Sea's Paradise • Tripulante #{member.guild.member_count}")
+            if WELCOME_GIF:
+                await ch.send(WELCOME_GIF)
             await ch.send(embed=e)
 
     @commands.Cog.listener()
@@ -282,17 +284,34 @@ class Servidor(commands.Cog):
         except Exception as erro:
             print(f"❌ ERRO PAINEL NPC — {type(erro).__name__}: {erro}")
             return await ctx.send('⚠️ Não consegui consultar os NPCs persistentes agora. O erro foi registrado no console.')
-        e=discord.Embed(title='🎭 CONTROLE DE NPCs',description='NPCs persistentes conhecidos pelo mundo. Localizações usam o mesmo catálogo dos HUBs do servidor.', color=0x11806A)
+        # Discord limita cada field a 1024 caracteres. A versão anterior montava até 4000
+        # em um único field e por isso o comando terminava em HTTP 400 / erro interno.
         linhas=[]
-        for x in rows[:30]:
+        for x in rows[:50]:
             d=dict(x)
             nome=d.get('nome') or 'NPC'
             local=d.get('localizacao') or 'local desconhecido'
             status=d.get('status') or 'desconhecido'
             linhas.append(f"• **{nome}** — {local} • {status}")
-        e.add_field(name='NPCs',value='\n'.join(linhas)[:4000] or 'Nenhum NPC persistente registrado.',inline=False)
-        e.set_footer(text="Sea's Paradise • Mestragem")
-        await ctx.send(embed=e)
+        if not linhas:
+            linhas=['Nenhum NPC persistente registrado.']
+
+        paginas=[]; atual=[]; tamanho=0
+        for linha in linhas:
+            custo=len(linha)+1
+            if atual and (tamanho+custo>3600 or len(atual)>=25):
+                paginas.append(atual); atual=[]; tamanho=0
+            atual.append(linha); tamanho+=custo
+        if atual: paginas.append(atual)
+
+        for i, pagina in enumerate(paginas,1):
+            e=discord.Embed(
+                title='🎭 CONTROLE DE NPCs' if i==1 else f'🎭 CONTROLE DE NPCs • {i}/{len(paginas)}',
+                description=('NPCs persistentes conhecidos pelo mundo. Localizações usam o mesmo catálogo dos HUBs do servidor.\n\n' if i==1 else '') + '\n'.join(pagina),
+                color=0x11806A
+            )
+            e.set_footer(text=f"Sea's Paradise • Mestragem • {len(rows)} NPC(s) consultado(s)")
+            await ctx.send(embed=e)
 
     @commands.command(name='localinfo')
     async def localinfo(self,ctx,*,local:str=None):
