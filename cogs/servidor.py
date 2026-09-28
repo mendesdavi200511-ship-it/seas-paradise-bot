@@ -229,9 +229,10 @@ class Servidor(commands.Cog):
             # O GIF pedido é uma página do Tenor, não um arquivo de imagem direto.
             # Enviá-lo como mensagem separada permite ao próprio Discord/Tenor montar o preview correto.
             e.set_footer(text=f"Sea's Paradise • Tripulante #{member.guild.member_count}")
+            await ch.send(embed=e)
+            # O GIF fica abaixo do card de boas-vindas no Discord.
             if WELCOME_GIF:
                 await ch.send(WELCOME_GIF)
-            await ch.send(embed=e)
 
     @commands.Cog.listener()
     async def on_member_ban(self,guild,user):
