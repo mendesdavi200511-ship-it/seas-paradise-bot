@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 from discord.ext import commands, tasks
 
 from data.economia import ITENS, EMBARCACOES, LOJAS, normalizar_local
-from data.navegacao import LOCAIS, ROTAS_INFO, OBSTACULOS, destinos_de, normalizar_destino
+from data.navegacao import LOCAIS, ROTAS_INFO, OBSTACULOS, destinos_de, destinos_hub, normalizar_destino
 from database.database import (
     buscar_ficha, buscar_localizacao_jogador, definir_localizacao_jogador,
     buscar_inventario, buscar_item_inventario, listar_akumas_inventario, consumir_akuma_encontrada, transferir_akuma_encontrada, comprar_item, vender_item,
@@ -162,8 +162,12 @@ class Economia(commands.Cog):
     def cog_unload(self): self.relogio_viagens.cancel()
 
     async def local_ctx(self,ctx):
-        canal=normalizar_destino(getattr(ctx.channel,"name",None))
-        if canal in LOCAIS: return canal
+        # O registro dos HUBs do servidor é a autoridade para comandos executados
+        # em canais de ilha e em suas threads. Banco é fallback fora de HUBs.
+        from data.discord_world import resolver_hub_canal
+        hub=resolver_hub_canal(ctx.channel)
+        if hub:
+            return hub
         loc=await buscar_localizacao_jogador(ctx.author.id)
         return normalizar_destino(loc["localizacao"] if loc else None)
 
@@ -232,7 +236,7 @@ class Economia(commands.Cog):
 
     @commands.command()
     async def rotas(self,ctx):
-        local=await self.local_ctx(ctx); destinos=destinos_de(local)
+        local=await self.local_ctx(ctx); destinos=destinos_hub(local) or destinos_de(local)
         if not destinos:return await ctx.send(f"🧭 Não há rotas cadastradas partindo de **{local or 'localização desconhecida'}**.")
         linhas=[]
         for d in destinos:
