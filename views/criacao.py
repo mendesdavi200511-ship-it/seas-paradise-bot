@@ -46,6 +46,14 @@ criando = {}
 RACAS = list(CATALOGO_RACAS.keys())
 FAMILIAS = list(CATALOGO_FAMILIAS.keys())
 FACCOES = ["Pirata", "Marinha", "Revolucionário", "Caçador de Recompensas", "Civil"]
+
+CARGOS_FACCAO = {
+    "Pirata": 1541981874283610132,
+    "Marinha": 1541982083650428989,
+    "Revolucionário": 1541982136775610458,
+    "Civil": 1541982442171277433,
+    "Caçador de Recompensas": 1541982483183050794,
+}
 PROFISSOES = list(CATALOGO_PROFISSOES.keys())
 CLASSES = list(CATALOGO_CLASSES.keys())
 
@@ -587,9 +595,18 @@ class FaccaoSelect(
             interaction.user.id
         )
 
-        dados["faccao"] = (
-            self.values[0]
-        )
+        dados["faccao"] = self.values[0]
+
+        # Cargo visual de afiliação acompanha a escolha da ficha.
+        if interaction.guild and isinstance(interaction.user, discord.Member):
+            ids=set(CARGOS_FACCAO.values())
+            remover=[r for r in interaction.user.roles if r.id in ids]
+            adicionar=interaction.guild.get_role(CARGOS_FACCAO.get(dados["faccao"]))
+            try:
+                if remover: await interaction.user.remove_roles(*remover, reason="Sea's Paradise — troca de facção na criação")
+                if adicionar: await interaction.user.add_roles(adicionar, reason="Sea's Paradise — facção escolhida")
+            except discord.Forbidden:
+                pass
 
         await interaction.response.edit_message(
             embed=criar_embed(
@@ -840,7 +857,7 @@ class CriacaoView(
     @discord.ui.button(
         label="Nome",
         emoji="✏️",
-        style=discord.ButtonStyle.primary,
+        style=discord.ButtonStyle.secondary,
         row=0
     )
     async def nome(
@@ -909,7 +926,7 @@ class CriacaoView(
     @discord.ui.button(
         label="Sortear Raça",
         emoji="🧬",
-        style=discord.ButtonStyle.primary,
+        style=discord.ButtonStyle.secondary,
         row=1
     )
     async def raca(
@@ -955,7 +972,7 @@ class CriacaoView(
     @discord.ui.button(
         label="Sortear Família",
         emoji="🩸",
-        style=discord.ButtonStyle.primary,
+        style=discord.ButtonStyle.secondary,
         row=1
     )
     async def familia(
