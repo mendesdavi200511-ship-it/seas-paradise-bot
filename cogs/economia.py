@@ -16,7 +16,7 @@ from database.database import (
     criar_plano_viagem, buscar_plano_viagem_user, buscar_plano_viagem_canal, listar_embarques, embarcar_plano, desembarcar_plano, cancelar_plano_viagem, fechar_plano_viagem, passageiros_viagem,
 )
 
-COR = discord.Color.from_rgb(32, 104, 160)
+COR = discord.Color.from_rgb(245, 190, 35)
 
 def dinheiro(v): return f"฿ {int(v):,}".replace(",", ".")
 
@@ -100,16 +100,27 @@ class AkumaSelect(discord.ui.Select):
         akumas=await listar_akumas_inventario(self.user_id)
         a=next((x for x in akumas if str(x['id'])==self.values[0]),None)
         if not a:return await interaction.response.send_message("❌ Essa fruta não está mais disponível.",ephemeral=True)
-        await interaction.response.edit_message(embed=discord.Embed(title=f"🍈 {a['nome']}",description=f"**Tipo:** {a['tipo'].title()}\n\nConsumir a fruta concede seu poder ao personagem. Um personagem que já possui Akuma no Mi não pode consumir outra.",color=discord.Color.purple()),view=AkumaItemView(self.user_id,a['nome']))
+        await interaction.response.edit_message(embed=discord.Embed(title=f"🍈 {a['nome']}",description=f"**Tipo:** {a['tipo'].title()}\n\nConsumir a fruta concede seu poder ao personagem. Um personagem que já possui Akuma no Mi não pode consumir outra.",color=COR),view=AkumaItemView(self.user_id,a['nome']))
 
 class AkumaItemView(discord.ui.View):
     def __init__(self,user_id,nome):super().__init__(timeout=180);self.user_id=user_id;self.nome=nome
     @discord.ui.button(label="Consumir Akuma no Mi",emoji="🍈",style=discord.ButtonStyle.success)
     async def consumir(self,interaction,button):
-        if interaction.user.id!=self.user_id:return await interaction.response.send_message("❌ Este painel não é seu.",ephemeral=True)
-        ak=await consumir_akuma_encontrada(self.user_id,self.nome)
-        if not ak:return await interaction.response.send_message("❌ Não foi possível consumir essa fruta. Ela pode ter expirado, já ter sido usada ou seu personagem já possuir uma Akuma no Mi.",ephemeral=True)
-        await interaction.response.send_message(f"🍈 **{ak['nome']} consumida!** O poder da **{ak['nome']}** agora pertence ao seu personagem.")
+        if interaction.user.id!=self.user_id:
+            return await interaction.response.send_message("❌ Este painel não é seu.",ephemeral=True)
+        # Discord exige ACK em poucos segundos. Confirma o clique ANTES de consultar/gravar no PostgreSQL.
+        await interaction.response.defer()
+        try:
+            ak=await consumir_akuma_encontrada(self.user_id,self.nome)
+        except Exception as ex:
+            print(f"❌ Erro ao consumir Akuma: {type(ex).__name__}: {ex}")
+            return await interaction.followup.send("⚠️ Não consegui concluir o consumo agora. A fruta **não foi consumida**; tente novamente.",ephemeral=True)
+        if not ak:
+            return await interaction.followup.send("❌ Não foi possível consumir essa fruta. Ela pode ter expirado, já ter sido usada ou seu personagem já possuir uma Akuma no Mi.",ephemeral=True)
+        for item in self.children:
+            item.disabled=True
+        emb=discord.Embed(title=f"🍈 {ak['nome']} consumida!",description=f"O poder da **{ak['nome']}** agora pertence ao seu personagem.",color=COR)
+        await interaction.edit_original_response(embed=emb,view=self)
 
 class InventarioView(discord.ui.View):
     def __init__(self,user_id,rows,akumas=None):

@@ -26,6 +26,7 @@ BOSS_ARCHETYPES=[
 BOSS_CD_HOURS=1
 AI_LIMIT=asyncio.Semaphore(max(2,int(os.getenv('BOSS_AI_CONCURRENCY','8'))))
 SEVERITY_FRACTIONS={'nenhum':0.0,'raspao':.03,'leve':.08,'solido':.16,'grave':.28,'critico':.45,'letal':1.0}
+COR_RP=discord.Color.from_rgb(245, 190, 35)
 
 CHANNEL_ALIASES={
     'sabaody':'Sabaody Archipelago','sabaody-park':'Sabaody Archipelago','sabaody-park-rp':'Sabaody Archipelago',
@@ -65,7 +66,7 @@ class BossCombatView(discord.ui.View):
         if not b:
             return await interaction.response.send_message('Esta luta já foi encerrada.',ephemeral=True)
         estado=(b['estado_contexto'] or 'Nenhum estado registrado.').strip()
-        e=discord.Embed(title='📜 Estado atual',description=estado[:3900],color=discord.Color.blue())
+        e=discord.Embed(title='📜 Estado atual',description=estado[:3900],color=COR_RP)
         await interaction.response.send_message(embed=e,ephemeral=True)
 
     @discord.ui.button(label='Desistir',emoji='🏳️',style=discord.ButtonStyle.secondary)
@@ -174,6 +175,24 @@ Responda SOMENTE JSON válido:
         out['desfecho']=desfecho
         return out
 
+    async def _resolver_com_retentativas(self, acao, ficha, esp, boss, stats):
+        """Resolve a troca sem transformar falha de API/JSON em turno do jogo."""
+        erros=[]
+        for tentativa in range(3):
+            try:
+                if tentativa == 0:
+                    out=await asyncio.wait_for(self._resolver_troca(acao,ficha,esp,boss,stats), timeout=35)
+                else:
+                    out=await asyncio.wait_for(self._fallback_troca(acao,ficha,boss,stats), timeout=35)
+                if out and out.get('narracao') and out.get('novo_estado'):
+                    return out
+            except Exception as ex:
+                erros.append(f"{type(ex).__name__}: {ex}")
+                print(f"⚠️ Boss tentativa {tentativa+1}/3 falhou: {erros[-1]}")
+            if tentativa < 2:
+                await asyncio.sleep(.6)
+        raise RuntimeError(' | '.join(erros[-3:]) or 'resolução sem conteúdo válido')
+
     async def _fallback_troca(self, acao, ficha, boss, stats):
         """Segunda tentativa curta: nunca devolve o manual interno ao jogador."""
         estado=boss['estado_contexto'] or self._estado_inicial(ficha,boss['boss_nome'])
@@ -198,7 +217,7 @@ Responda SOMENTE JSON válido:
                 return out
         except Exception as ex:
             print(f'⚠️ Fallback narrativo Boss falhou: {type(ex).__name__}: {ex}')
-        return {'narracao':'O confronto não pôde ser resolvido neste instante. Tente a ação novamente em alguns segundos.','novo_estado':estado,'desfecho':'continua','resumo_turno':'Nenhuma alteração foi aplicada porque a resolução falhou.'}
+        raise RuntimeError('IA não devolveu uma resolução narrativa válida no fallback')
 
     def _dano_por_severidade(self,severity,hp_max):
         return max(0,round(int(hp_max)*SEVERITY_FRACTIONS.get(severity,0)))
@@ -268,10 +287,10 @@ Responda SOMENTE JSON válido:
             if updates:
                 q='UPDATE bosses_rp_ativos SET '+','.join(updates)+' WHERE id=$1 RETURNING *'; b=await get_pool().fetchrow(q,b['id'],*vals)
             try:
-                out=await self._resolver_troca(acao,ficha,esp,b,stats)
+                out=await self._resolver_com_retentativas(acao,ficha,esp,b,stats)
             except Exception as ex:
-                print(f'⚠️ Árbitro Boss IA falhou; usando fallback mecânico: {type(ex).__name__}: {ex}')
-                out=await self._fallback_troca(acao,ficha,b,stats)
+                print(f'❌ Boss não resolvido após retentativas: {type(ex).__name__}: {ex}')
+                return await ctx.send('⚠️ O narrador automático teve uma falha temporária. **Sua ação e o turno não foram consumidos.** Tente novamente em alguns segundos.')
             resumo=_clip(out.get('resumo_turno') or out.get('narracao',''),500)
             hist=_clip((b['historico_contexto'] or '')+f"\nT{b['turno']}: {resumo}",1800)
             novo=_clip(out.get('novo_estado') or b['estado_contexto'],1400)
@@ -284,7 +303,7 @@ Responda SOMENTE JSON válido:
             e=discord.Embed(
                 title=f'⚔️ {titulo_boss} — Rank {b["rank"]}',
                 description=narracao,
-                color=discord.Color.blue()
+                color=COR_RP
             )
             e.set_footer(text=f"Sea's Paradise • Turno {int(b['turno'])}")
             await ctx.send(embed=e, view=BossCombatView(self, ctx.author.id))
