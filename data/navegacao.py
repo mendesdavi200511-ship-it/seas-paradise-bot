@@ -38,6 +38,7 @@ ALIASES_NAVEGACAO = {
     "conomi":"Conomi Islands", "dawn":"Dawn Island", "alabasta":"Alabasta", "arabasta":"Alabasta",
     "ilha dos tritoes":"Fish-Man Island", "fishman island":"Fish-Man Island", "wano":"Wano Country",
     "whole cake":"Whole Cake Island", "hachi":"Hachinosu", "pirate island":"Hachinosu",
+    "sabaody":"Sabaody Archipelago", "fish man island":"Fish-Man Island", "karai bari":"Karai Bari Island",
 }
 
 def normalizar_destino(nome):
@@ -142,3 +143,28 @@ OBSTACULOS = {
 def destinos_de(origem):
     origem=normalizar_destino(origem)
     return sorted([b for (a,b) in ROTAS_INFO if a==origem])
+
+# v89 — rotas autoritativas entre TODOS os HUBs reais do Discord.
+# O sistema antigo continua suportando sublocações narrativas, mas !rotas usa esta rede para HUBs.
+from data.discord_world import TODOS_HUBS as _HUBS_DISCORD
+ROTAS_HUB = {}
+def _hubrota(a,b,**kw):
+    if a not in _HUBS_DISCORD or b not in _HUBS_DISCORD: return
+    ROTAS_HUB.setdefault(a,[]).append(b); ROTAS_HUB.setdefault(b,[]).append(a)
+    if (a,b) not in ROTAS_INFO: rota(a,b,kw.get('minutos',90),kw.get('requisito','barco'),kw.get('suprimentos',2),kw.get('desgaste',7),kw.get('perigo'))
+
+# progressão e ramificações navegáveis
+_HUB_EDGES=[
+('Dawn Island','Goa Kingdom'),('Dawn Island','Shells Town'),('Goa Kingdom','Shells Town'),('Shells Town','Orange Town'),('Orange Town','Syrup Village'),('Syrup Village','Baratie'),('Baratie','Conomi Islands'),('Conomi Islands','Loguetown'),('Loguetown','Tequila Wolf'),('Loguetown','Reverse Mountain'),('Tequila Wolf','Reverse Mountain'),
+('Reverse Mountain','Twin Cape'),('Twin Cape','Whisky Peak'),('Whisky Peak','Little Garden'),('Little Garden','Drum Island'),('Drum Island','Alabasta'),('Alabasta','Jaya'),('Jaya','Skypiea'),('Skypiea','Weatheria'),('Jaya','Long Ring Long Land'),('Long Ring Long Land','Water 7'),('Water 7','Enies Lobby'),('Water 7','Thriller Bark'),('Enies Lobby','Thriller Bark'),('Thriller Bark','Sabaody Archipelago'),
+('Sabaody Archipelago','Amazon Lily'),('Amazon Lily','Rusukaina'),('Sabaody Archipelago','Impel Down'),('Impel Down','Marineford'),('Marineford','Sabaody Archipelago'),('Sabaody Archipelago','Kuraigana Island'),('Sabaody Archipelago','Momoiro Island'),('Sabaody Archipelago','Boin Archipelago'),('Sabaody Archipelago','Karakuri Island'),('Sabaody Archipelago','Torino Kingdom'),('Sabaody Archipelago','Namakura Island'),('Sabaody Archipelago','Fish-Man Island'),('Fish-Man Island','Mary Geoise'),('Fish-Man Island','Punk Hazard'),
+('Punk Hazard','Dressrosa'),('Dressrosa','Zou'),('Zou','Whole Cake Island'),('Whole Cake Island','Wano Country'),('Wano Country','Egghead'),('Egghead','Elbaf'),('Egghead','G-14'),('Egghead','Winner Island'),('Winner Island','Hachinosu'),('Elbaf','Hachinosu'),('Elbaf','Sphinx'),('Sphinx','Karai Bari Island'),('Dressrosa','Karai Bari Island'),
+('Alabasta','Ohara'),('Ohara','Ilusia Kingdom'),('Ilusia Kingdom','Kano Country'),('Kano Country','Jaya'),('Water 7','Germa Kingdom'),('Germa Kingdom','Flevance'),('Flevance','Lvneel Kingdom'),('Lvneel Kingdom','Thriller Bark'),('Sabaody Archipelago','Sorbet Kingdom'),('Sorbet Kingdom','Centauria'),('Centauria','Baterilla'),('Baterilla','Fish-Man Island'),
+('Hachinosu','God Valley'),('Elbaf','Laugh Tale')]
+for _a,_b in _HUB_EDGES: _hubrota(_a,_b)
+for _h in _HUBS_DISCORD: ROTAS_HUB.setdefault(_h,[])
+
+def destinos_hub(origem):
+    from data.discord_world import resolver_hub_nome
+    origem=resolver_hub_nome(origem) or normalizar_destino(origem)
+    return sorted(set(ROTAS_HUB.get(origem,[])))

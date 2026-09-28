@@ -99,3 +99,22 @@ def normalizar_local(nome):
         return None
     chave = str(nome).strip().casefold()
     return ALIASES_LOCAL.get(chave, next((x for x in LOJAS if x.casefold() == chave), str(nome).strip()))
+
+# v89 — cobertura econômica dos HUBs oficiais do Discord.
+# Mantém lojas especiais acima e cria uma loja-base somente onde ainda não havia catálogo.
+try:
+    from data.discord_world import TODOS_HUBS
+    _base_itens=['refeicao_simples','primeiros_socorros','mantimentos','bussola']
+    _grand_itens=['refeicao_completa','kit_medico','kit_reparo','mantimentos','log_pose','den_den_mushi']
+    _sem_comercio={'God Valley','Laugh Tale','Impel Down','Enies Lobby','Marineford','Mary Geoise'}
+    for _local in TODOS_HUBS:
+        if _local in LOJAS: continue
+        if _local in _sem_comercio:
+            LOJAS[_local]={'itens':[],'barcos':[]}
+        else:
+            _reg=__import__('data.navegacao',fromlist=['LOCAIS']).LOCAIS.get(_local,('East Blue',1))[0]
+            _it=list(_grand_itens if _reg in {'Grand Line','New World','Red Line','Government','Calm Belt'} else _base_itens)
+            LOJAS[_local]={'itens':_it,'barcos':['barco_pequeno'] if _reg in {'East Blue','West Blue','North Blue','South Blue'} else []}
+        ALIASES_LOCAL.setdefault(_local.casefold(),_local)
+except Exception:
+    pass

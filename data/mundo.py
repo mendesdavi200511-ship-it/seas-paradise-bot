@@ -91,4 +91,9 @@ ILHAS_ESPECIAIS = {
 def info_ilha(nome):
     reg, perigo = LOCAIS.get(nome,("Desconhecida",2))
     x=ILHAS_ESPECIAIS.get(nome,{"inimigos":["Ameaças locais"],"bosses":[],"segredos":["Tesouros ainda não catalogados"]})
-    return {"nome":nome,"regiao":reg,"perigo":perigo,**x}
+    try:
+        from data.location_content import conteudo
+        extra=conteudo(nome)
+    except Exception:
+        extra={"npcs":[],"lojas":[],"eventos":[]}
+    return {"nome":nome,"regiao":reg,"perigo":perigo,**x,**extra}
