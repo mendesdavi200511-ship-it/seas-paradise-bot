@@ -48,7 +48,7 @@ class FichaPoderesView(discord.ui.View):
     async def transformacoes(self,interaction,button):
         specs=await buscar_especializacoes(self.user_id); linhas=[]
         for x in specs:
-            if x['categoria']=='haki':
+            if str(x['categoria']).casefold()=='haki':
                 linhas.append(f"👁️ **{x['nome']} — {x['porcentagem']}% / ∞**")
                 for n,req,d in HAKIS.get(x['nome'],[]): linhas.append(f"{'✅' if x['porcentagem']>=req else '🔒'} **{n}** ({req}%) — {d}")
         for f in await listar_formas(self.user_id): linhas.append(f"{'🔥' if f['ativa'] else '🔹'} **{f['nome']}** • F +{f['bonus_forca']}% • R +{f['bonus_resistencia']}% • V +{f['bonus_velocidade']}%")
@@ -57,7 +57,7 @@ class FichaPoderesView(discord.ui.View):
     async def akuma(self,interaction,button):
         specs=await buscar_especializacoes(self.user_id); linhas=[]
         for a in specs:
-            if a['categoria'] in ('akuma','akuma no mi'):
+            if str(a['categoria']).casefold() in ('akuma','akuma no mi'):
                 tipo,skills=skills_akuma(a['nome']); linhas.append(f"🍈 **{a['nome']}** • {tipo.title()} • **{a['porcentagem']}% / 300%**")
                 for req,n,d in skills: linhas.append(f"{'✅' if a['porcentagem']>=req else '🔒'} **{n}** ({req}%) — {d}")
         await interaction.response.send_message(embed=discord.Embed(title='🍈 AKUMA NO MI — SKILLS',description='\n'.join(linhas) or 'Nenhuma Akuma no Mi.'),ephemeral=True)
@@ -462,6 +462,17 @@ async def criar_embed_ficha(
             f"🔥 **Vontade do D.:** {formatar_sim_nao(valor_seguro(personagem, 'vontade_d', False))}\n"
             f"🌅 **Vontade de JoyBoy:** {formatar_sim_nao(valor_seguro(personagem, 'joyboy', False))}"
         ),
+        inline=False
+    )
+
+    # =====================================================
+    # AKUMA NO MI — fonte autoritativa: fichas.akuma
+    # =====================================================
+
+    akuma_atual = valor_seguro(personagem, "akuma", "Nenhuma")
+    embed.add_field(
+        name="🍈 Akuma no Mi",
+        value=(f"**{akuma_atual}**" if akuma_atual not in (None, "", "Nenhuma") else "**Nenhuma**"),
         inline=False
     )
 

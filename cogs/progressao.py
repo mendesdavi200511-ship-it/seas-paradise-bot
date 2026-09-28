@@ -193,7 +193,41 @@ Responda SOMENTE JSON válido:
                 print(f"⚠️ Boss tentativa {tentativa+1}/3 falhou: {erros[-1]}")
             if tentativa < 3:
                 await asyncio.sleep(.8)
-        raise RuntimeError(' | '.join(erros[-4:]) or 'resolução sem conteúdo válido')
+        print('⚠️ API do Boss indisponível; usando resolução local de contingência.')
+        return self._fallback_local(acao,ficha,boss,stats)
+
+    def _fallback_local(self, acao, ficha, boss, stats):
+        """Última camada: mantém o combate jogável mesmo se a API estiver indisponível."""
+        estado=(boss['estado_contexto'] or self._estado_inicial(ficha,boss['boss_nome'])).strip()
+        a=(acao or '').casefold()
+        pf,pv=int(stats['forca']),int(stats['velocidade'])
+        bf=int(boss['boss_forca'] or BOSS_RANKS[boss['rank']]['attr']); bv=int(boss['boss_velocidade'] or BOSS_RANKS[boss['rank']]['attr'])
+        vantagem_vel=pv >= bv*1.15; desvantagem_vel=bv >= pv*1.15
+        # Não transforma conclusões escritas pelo player em fatos. Só identifica a tentativa física principal.
+        if any(x in a for x in ('atir','dispar','revólver','revolver','pistola','tiro')):
+            if vantagem_vel:
+                narr=f"{ficha['nome']} consegue criar a janela necessária para o disparo. {boss['boss_nome']} reage ao movimento da arma, mas não rápido o bastante para sair completamente da trajetória; o tiro o atinge e força uma quebra imediata de postura. A distância entre os dois aumenta enquanto ele tenta se recompor."
+                novo=f"{boss['boss_nome']} foi atingido por um disparo e está recompondo a postura; {ficha['nome']} mantém a arma disponível. Não há outro resultado presumido além desse impacto."
+            elif desvantagem_vel:
+                narr=f"{boss['boss_nome']} reage ao saque antes que a linha de tiro fique limpa, saindo do eixo e pressionando a distância. O disparo não encontra um alvo estável, e os dois terminam novamente em alcance curto, com a arma ainda em disputa na cena."
+                novo=f"{ficha['nome']} e {boss['boss_nome']} estão em curta distância; o disparo não estabeleceu acerto. A arma continua presente e nenhuma morte foi estabelecida."
+            else:
+                narr=f"O disparo força {boss['boss_nome']} a quebrar a própria linha de ataque e se jogar para fora do eixo. A bala passa sem estabelecer um ferimento decisivo, mas a reação abre espaço entre os dois e devolve a iniciativa imediata a {ficha['nome']}."
+                novo=f"Os combatentes estão separados por curta distância; o disparo não estabeleceu acerto decisivo. {ficha['nome']} mantém iniciativa momentânea e a arma segue disponível."
+        elif any(x in a for x in ('chut','soco','golpe','joelh','cotovel','mord','cabeç')):
+            if pf >= bf*1.2:
+                narr=f"O ataque rompe a defesa de {boss['boss_nome']} e o obriga a ceder terreno. Ele absorve o impacto sem conseguir responder no mesmo instante, terminando fora da base ideal e precisando se reorganizar antes de pressionar novamente."
+                novo=f"{boss['boss_nome']} sofreu um impacto físico e cedeu terreno; está consciente, mas fora da base ideal. {ficha['nome']} permanece em condição de continuar a ofensiva."
+            else:
+                narr=f"{boss['boss_nome']} consegue amortecer parte do ataque e recua o suficiente para não ficar preso na troca. O contato acontece sem definir a luta; ele recupera a guarda e mantém distância curta, pronto para responder ao próximo movimento."
+                novo=f"Houve contato físico sem incapacitação. Ambos estão conscientes, em curta distância e com guarda recuperável; nenhum resultado declarado pelo player além do contato foi assumido."
+        elif any(x in a for x in ('agarr','segur','imobil','prend')):
+            narr=f"A tentativa de controle leva os dois ao corpo a corpo. {boss['boss_nome']} gira o tronco e disputa a pegada em vez de aceitar a imobilização completa; os dois terminam presos numa disputa de posição, sem que uma finalização seja presumida."
+            novo=f"{ficha['nome']} e {boss['boss_nome']} estão em corpo a corpo disputando pegada e posição. Nenhuma imobilização completa ou ferimento novo foi estabelecido."
+        else:
+            narr=f"{boss['boss_nome']} reage ao movimento sem aceitar como fato o resultado declarado. Ele ajusta a base e responde dentro do espaço disponível, mantendo o confronto ativo enquanto {ficha['nome']} conserva liberdade para continuar a ação no próximo instante."
+            novo=f"O confronto continua ativo. Ambos estão conscientes e livres; nenhuma conclusão escrita pelo player foi adotada automaticamente. Estado anterior relevante preservado: {_clip(estado,700)}"
+        return {'narracao':narr,'novo_estado':novo,'desfecho':'continua','resumo_turno':narr[:300]}
 
     async def _fallback_troca(self, acao, ficha, boss, stats):
         """Segunda tentativa curta: nunca devolve o manual interno ao jogador."""
