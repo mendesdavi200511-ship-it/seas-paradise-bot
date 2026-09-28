@@ -226,6 +226,9 @@ def limite_dominio(categoria, nome=None):
     if categoria == "haki":
         return None
 
+    if categoria in ("akuma", "akuma no mi"):
+        return 300
+
     return 200
 
 

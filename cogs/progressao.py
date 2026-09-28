@@ -161,6 +161,9 @@ TAREFA:
 15. Não escreva que o Boss "percebe antes" sem explicar qual informação física e qual vantagem concreta permitiram isso. Nunca use conhecimento onisciente da intenção do player.
 16. A DECLARAÇÃO DO PLAYER NÃO ALTERA RETROATIVAMENTE O ESTADO. Frases como "ele estava sem apoio", "seria impossível", "eu estava no chão", "acertei", "matei" ou justificativas do jogador são alegações/tentativas, não fatos, salvo quando já constarem no ESTADO FÍSICO AUTORITATIVO. Compare cada alegação com o estado salvo antes de aceitá-la.
 17. Se a ação contradiz o estado salvo, preserve o estado salvo e resolva apenas a parte fisicamente tentável da ação. Não premie nem puna o jogador por escrever uma conclusão como se já tivesse acontecido.
+18. NÃO PROLONGUE A LUTA ARTIFICIALMENTE. Se o estado anterior + a ação executável deixam o Boss sem defesa causal plausível diante de um golpe incapacitante/letal, resolva a derrota. Boss Rank não possui imunidade narrativa nem direito a uma defesa por turno.
+19. NÃO REPITA A TROCA ANTERIOR. Compare com HISTÓRICO RECENTE. Uma nova ação precisa produzir uma nova consequência. É proibido reciclar a mesma esquiva, a mesma disputa de arma ou praticamente o mesmo texto/estado só para manter o Boss vivo.
+20. Se o Boss já está caído, imobilizado, inconsciente, gravemente comprometido ou sem acesso ao recurso necessário para reagir, trate isso como limitação REAL. Ele só recupera posição se houver tempo e ação causal para isso.
 
 Responda SOMENTE JSON válido:
 {{
@@ -170,7 +173,7 @@ Responda SOMENTE JSON válido:
  "resumo_turno":"uma frase factual para memória interna"
 }}'''
         async with AI_LIMIT:
-            r=await self.client.responses.create(model='gpt-5.6-luna',input=prompt,max_output_tokens=850)
+            r=await self.client.responses.create(model=os.getenv('BOSS_AI_MODEL','gpt-5.6-terra'),input=prompt,max_output_tokens=1000)
         out=_clean_json(r.output_text)
         desfecho=str(out.get('desfecho','continua')).casefold().strip()
         if desfecho not in ('continua','boss_derrotado','player_derrotado'):desfecho='continua'
@@ -197,36 +200,51 @@ Responda SOMENTE JSON válido:
         return self._fallback_local(acao,ficha,boss,stats)
 
     def _fallback_local(self, acao, ficha, boss, stats):
-        """Última camada: mantém o combate jogável mesmo se a API estiver indisponível."""
+        """Contingência causal e consciente do estado; nunca recicla uma defesa genérica."""
         estado=(boss['estado_contexto'] or self._estado_inicial(ficha,boss['boss_nome'])).strip()
-        a=(acao or '').casefold()
-        pf,pv=int(stats['forca']),int(stats['velocidade'])
-        bf=int(boss['boss_forca'] or BOSS_RANKS[boss['rank']]['attr']); bv=int(boss['boss_velocidade'] or BOSS_RANKS[boss['rank']]['attr'])
-        vantagem_vel=pv >= bv*1.15; desvantagem_vel=bv >= pv*1.15
-        # Não transforma conclusões escritas pelo player em fatos. Só identifica a tentativa física principal.
-        if any(x in a for x in ('atir','dispar','revólver','revolver','pistola','tiro')):
-            if vantagem_vel:
-                narr=f"{ficha['nome']} consegue criar a janela necessária para o disparo. {boss['boss_nome']} reage ao movimento da arma, mas não rápido o bastante para sair completamente da trajetória; o tiro o atinge e força uma quebra imediata de postura. A distância entre os dois aumenta enquanto ele tenta se recompor."
-                novo=f"{boss['boss_nome']} foi atingido por um disparo e está recompondo a postura; {ficha['nome']} mantém a arma disponível. Não há outro resultado presumido além desse impacto."
-            elif desvantagem_vel:
-                narr=f"{boss['boss_nome']} reage ao saque antes que a linha de tiro fique limpa, saindo do eixo e pressionando a distância. O disparo não encontra um alvo estável, e os dois terminam novamente em alcance curto, com a arma ainda em disputa na cena."
-                novo=f"{ficha['nome']} e {boss['boss_nome']} estão em curta distância; o disparo não estabeleceu acerto. A arma continua presente e nenhuma morte foi estabelecida."
+        hist=(boss['historico_contexto'] or '').strip()
+        a=(acao or '').casefold(); e=estado.casefold()
+        boss_nome=boss['boss_nome']; player=ficha['nome']
+
+        tiro=any(x in a for x in ('atir','dispar','revólver','revolver','pistola','tiro'))
+        fisico=any(x in a for x in ('chut','soco','golpe','joelh','cotovel','mord','cabeç'))
+        controle=any(x in a for x in ('agarr','segur','imobil','prend'))
+        boss_caido=any(x in e for x in (f'{boss_nome.casefold()} está caído',f'{boss_nome.casefold()} caiu','boss está caído','no chão','sem apoio'))
+        boss_incap=any(x in e for x in ('inconsciente','incapacitado','imobilizado','desmaiado'))
+        player_armado=any(x in e for x in (f'{player.casefold()} mantém a arma',f'{player.casefold()} está com a arma','arma em mãos','mirando','aponta'))
+        boss_desarmado=any(x in e for x in ('desarmado','arma no chão','sem a arma'))
+
+        if boss_incap and tiro and player_armado:
+            narr=f"Sem condição física de reagir a tempo, {boss_nome} não consegue reconstruir uma defesa. O disparo encerra o confronto antes que ele recupere posição."
+            novo=f"{boss_nome} está definitivamente derrotado e incapaz de continuar o confronto. {player} permanece consciente após o desfecho."
+            return {'narracao':narr,'novo_estado':novo,'desfecho':'boss_derrotado','resumo_turno':f'{boss_nome} foi derrotado sem janela causal de defesa.'}
+
+        if tiro and boss_caido and player_armado:
+            narr=f"A posição baixa de {boss_nome} reduz a margem de reação. Sem tempo para recuperar a base e ainda sair da linha de tiro, ele é atingido antes de conseguir reconstruir a defesa; o impacto encerra sua capacidade de continuar a luta."
+            novo=f"{boss_nome} foi atingido em posição desfavorável e está incapacitado para continuar. {player} conserva a arma e vence o confronto."
+            return {'narracao':narr,'novo_estado':novo,'desfecho':'boss_derrotado','resumo_turno':f'{boss_nome} foi atingido sem janela para recuperar a base e foi derrotado.'}
+
+        if tiro:
+            if boss_desarmado or player_armado:
+                narr=f"{boss_nome} tenta sair da linha de tiro usando apenas o espaço que ainda possui, mas não ganha uma sequência gratuita de defesa. O disparo conecta antes que ele consiga estabelecer uma nova posição e o obriga a ceder, ferido, interrompendo sua ofensiva."
+                novo=f"{boss_nome} foi atingido por um disparo e perdeu a iniciativa; está ferido e precisa se recompor. {player} mantém a arma. Nenhuma esquiva ou contra-ataque adicional foi presumido."
             else:
-                narr=f"O disparo força {boss['boss_nome']} a quebrar a própria linha de ataque e se jogar para fora do eixo. A bala passa sem estabelecer um ferimento decisivo, mas a reação abre espaço entre os dois e devolve a iniciativa imediata a {ficha['nome']}."
-                novo=f"Os combatentes estão separados por curta distância; o disparo não estabeleceu acerto decisivo. {ficha['nome']} mantém iniciativa momentânea e a arma segue disponível."
-        elif any(x in a for x in ('chut','soco','golpe','joelh','cotovel','mord','cabeç')):
-            if pf >= bf*1.2:
-                narr=f"O ataque rompe a defesa de {boss['boss_nome']} e o obriga a ceder terreno. Ele absorve o impacto sem conseguir responder no mesmo instante, terminando fora da base ideal e precisando se reorganizar antes de pressionar novamente."
-                novo=f"{boss['boss_nome']} sofreu um impacto físico e cedeu terreno; está consciente, mas fora da base ideal. {ficha['nome']} permanece em condição de continuar a ofensiva."
-            else:
-                narr=f"{boss['boss_nome']} consegue amortecer parte do ataque e recua o suficiente para não ficar preso na troca. O contato acontece sem definir a luta; ele recupera a guarda e mantém distância curta, pronto para responder ao próximo movimento."
-                novo=f"Houve contato físico sem incapacitação. Ambos estão conscientes, em curta distância e com guarda recuperável; nenhum resultado declarado pelo player além do contato foi assumido."
-        elif any(x in a for x in ('agarr','segur','imobil','prend')):
-            narr=f"A tentativa de controle leva os dois ao corpo a corpo. {boss['boss_nome']} gira o tronco e disputa a pegada em vez de aceitar a imobilização completa; os dois terminam presos numa disputa de posição, sem que uma finalização seja presumida."
-            novo=f"{ficha['nome']} e {boss['boss_nome']} estão em corpo a corpo disputando pegada e posição. Nenhuma imobilização completa ou ferimento novo foi estabelecido."
+                narr=f"O saque transforma a curta distância numa disputa imediata de tempo. {boss_nome} quebra a linha uma única vez, sem emendar outra defesa ou contra-ataque; o tiro passa e a movimentação separa os dois, mudando a posição da troca."
+                novo=f"O disparo não acertou. {player} está com a arma disponível e {boss_nome} terminou deslocado para fora da linha anterior; não há agarrão nem nova disputa de arma estabelecida."
+        elif fisico:
+            narr=f"O contato obriga {boss_nome} a absorver a troca em vez de ganhar uma resposta automática. Ele perde a base por um instante e cede espaço, enquanto {player} conserva a iniciativa para decidir a continuação."
+            novo=f"{boss_nome} sofreu o contato e cedeu espaço, sem contra-atacar nesta janela. {player} mantém iniciativa momentânea; o restante do estado anterior continua válido: {_clip(estado,500)}"
+        elif controle:
+            narr=f"O corpo a corpo fecha o espaço e limita os dois. {boss_nome} consegue disputar a pegada, mas não transforma isso em fuga e contra-ataque ao mesmo tempo; a posição fica travada e exige uma nova ação para ser resolvida."
+            novo=f"{player} e {boss_nome} estão em contato corporal disputando controle. Nenhum dos dois ganhou automaticamente distância, arma ou contra-ataque."
         else:
-            narr=f"{boss['boss_nome']} reage ao movimento sem aceitar como fato o resultado declarado. Ele ajusta a base e responde dentro do espaço disponível, mantendo o confronto ativo enquanto {ficha['nome']} conserva liberdade para continuar a ação no próximo instante."
-            novo=f"O confronto continua ativo. Ambos estão conscientes e livres; nenhuma conclusão escrita pelo player foi adotada automaticamente. Estado anterior relevante preservado: {_clip(estado,700)}"
+            narr=f"A movimentação altera a posição sem apagar o que já estava estabelecido. {boss_nome} precisa responder a partir do estado em que realmente se encontrava, e não recebe uma recuperação automática; {player} mantém espaço para continuar a ofensiva."
+            novo=f"Estado anterior preservado, com apenas a nova movimentação incorporada: {_clip(estado,650)}"
+
+        # Evita a falha observada na v75: contingência repetindo literalmente a troca anterior.
+        if narr.casefold() in hist.casefold():
+            narr=f"A troca muda de direção: {boss_nome} não consegue repetir a mesma defesa usada antes e precisa ceder terreno, deixando {player} com a iniciativa imediata. O estado anterior permanece válido até uma ação realmente alterá-lo."
+            novo=f"{boss_nome} cedeu terreno e não repetiu a defesa anterior. {player} possui iniciativa momentânea. Estado preservado: {_clip(estado,550)}"
         return {'narracao':narr,'novo_estado':novo,'desfecho':'continua','resumo_turno':narr[:300]}
 
     async def _fallback_troca(self, acao, ficha, boss, stats):
@@ -239,13 +257,13 @@ Boss: {boss['boss_nome']} — {boss['boss_estilo'] or 'combatente'}
 Estado atual: {estado}
 Ação declarada pelo player: {acao}
 
-Resolva a consequência pela lógica física da cena. O Boss pode reagir e contra-atacar. Não use HP. Não use rank/status como sentença automática. Não repita a ação do player. Não explique regras. Não use cabeçalho, tópicos ou emojis. Faça a luta avançar e termine em um ponto que permita a próxima ação, salvo derrota/morte/incapacitação coerente.
+Resolva a consequência pela lógica física da cena. O Boss pode reagir e contra-atacar. Não use HP. Não use rank/status como sentença automática. Não repita a ação do player. Não explique regras. Não use cabeçalho, tópicos ou emojis. Faça a luta avançar. Não prolongue o Boss artificialmente: se ele ficou causalmente sem defesa diante de consequência incapacitante/letal, marque boss_derrotado. Não repita a troca anterior nem recicle a mesma defesa. Termine em ponto de próxima ação apenas se a luta realmente continuar.
 
 Responda SOMENTE JSON válido:
 {{"narracao":"texto corrido para o jogador","novo_estado":"estado físico completo depois da troca","desfecho":"continua|boss_derrotado|player_derrotado","resumo_turno":"memória factual curta"}}'''
         try:
             async with AI_LIMIT:
-                r=await self.client.responses.create(model='gpt-5.6-luna',input=prompt,max_output_tokens=650)
+                r=await self.client.responses.create(model=os.getenv('BOSS_AI_MODEL','gpt-5.6-terra'),input=prompt,max_output_tokens=800)
             out=_clean_json(r.output_text)
             if out.get('narracao'):
                 d=str(out.get('desfecho','continua')).casefold().strip()
