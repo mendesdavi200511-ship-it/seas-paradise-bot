@@ -3,10 +3,10 @@ Não contém números de ficha: define a filosofia usada por Narrador e Boss Ran
 """
 
 COMBAT_LOGIC_RULES = r'''
-LEI CENTRAL DO COMBATE — LÓGICA ANTES DE ATRIBUTO:
-- Atributos são evidência de capacidade, nunca um botão de sucesso/fracasso. Nenhum atributo, rank ou fama anula causalidade física, posição, surpresa, distância, arma, ferimento, terreno, preparação ou uma abertura já criada.
-- Tudo que o jogador declara é uma TENTATIVA quanto ao resultado, mas toda ação fisicamente possível pode ser tentada, mesmo contra alguém muito superior. Não bloqueie uma tentativa só por diferença de nível.
-- Diferença enorme de poder deve aparecer organicamente nas consequências: velocidade para reagir, força para romper contenção, resistência para suportar impacto, experiência/poder para criar resposta. Não use "ele é mais forte" como explicação vazia.
+LEI CENTRAL DO COMBATE — CAUSALIDADE DA CENA, NÃO COMPARAÇÃO DE ATRIBUTOS:
+- No Narrador/Boss Rank, atributos numéricos NÃO são um placar de combate e NÃO devem ser usados para decidir acerto, esquiva, bloqueio, ferimento, sobrevivência ou vitória. Não compare Força/Resistência/Velocidade para fabricar um resultado.
+- Os atributos continuam existindo como sistema de progressão/ficha, mas a arbitragem narrativa trabalha com fatos concretos da cena: posição, distância, postura, arma, trajetória, técnica/poder disponível, ferimentos, terreno, preparação e janelas reais de ação/reação.
+- Tudo que o jogador declara é uma TENTATIVA quanto ao resultado. Resolva o que de fato acontece pela cadeia causal já estabelecida, sem dar sucesso automático ao jogador e sem dar defesa automática ao NPC.
 - Estado anterior é verdade até ser alterado por uma ação resolvida. Se alguém está agarrado, caído, desarmado, encurralado, com braço preso, a curta distância, mirando, ferido ou protegido por cobertura, isso continua valendo no próximo turno. Ninguém se liberta, recupera arma, muda distância ou postura magicamente.
 - Uma defesa precisa responder ao ataque que realmente está acontecendo. Espada erguida para aparar um soco não bloqueia automaticamente um tiro lateral; estar agarrado limita movimentos; curta distância reduz tempo de reação; cobertura muda linha de tiro.
 - O jogador não pode declarar o resultado ("não tomei dano", "acertei em cheio", "ele não consegue escapar"). Preserve a ação executada e resolva a consequência. O mesmo vale para NPCs.
@@ -22,6 +22,7 @@ LEI CENTRAL DO COMBATE — LÓGICA ANTES DE ATRIBUTO:
 - NÃO CONCEDA CONTRA-ATAQUE GRÁTIS. Primeiro resolva se a ação do atacante cria contato, ameaça ou abertura; só então verifique se existe janela física real para reação. Perceber um movimento não significa automaticamente conseguir esquivar, agarrar e ainda contra-atacar na mesma janela.
 - REAÇÃO TEM CUSTO DE TEMPO E POSIÇÃO. Quanto mais etapas a reação exige (esquivar + agarrar + girar + golpear), maior a necessidade de vantagem concreta já estabelecida. Não empilhe uma sequência perfeita para um lado sem justificativa causal.
 - Uma ação direcionada a ponto vulnerável não acerta automaticamente, mas também não pode ser neutralizada por uma coreografia inventada. Resolva alcance, tempo, ângulo, membros disponíveis, postura e diferença de velocidade relevante.
-- O texto visível deve mostrar o resultado físico da troca, não a comparação de números. Se a diferença de atributos foi decisiva, traduza-a em algo observável (chegou antes, rompeu a guarda, não teve tempo de acompanhar etc.).
+- O texto visível deve mostrar apenas o resultado físico da troca. Não derive 'chegou antes', 'rompeu a guarda' ou 'aguentou' de números de atributo; isso precisa nascer da própria situação, técnica/poder ou vantagem física já estabelecida na cena.
+- PODERES E TÉCNICAS TÊM PROGRESSÃO REAL. Uma técnica bloqueada pelo domínio não pode funcionar só porque foi escrita na ação. O narrador deve usar apenas capacidades já liberadas e nunca inventar uma versão equivalente para contornar o bloqueio.
 - O objetivo é uma luta viva: cada troca muda concretamente a situação e cria material para a próxima decisão do jogador.
 '''.strip()
