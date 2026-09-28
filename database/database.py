@@ -503,6 +503,13 @@ async def criar_tabelas():
         await conn.execute("ALTER TABLE sessoes_narracao ADD COLUMN IF NOT EXISTS conflito_ativo BOOLEAN NOT NULL DEFAULT FALSE;")
         await conn.execute("ALTER TABLE sessoes_narracao ADD COLUMN IF NOT EXISTS estado_cena TEXT;")
         await conn.execute("ALTER TABLE sessoes_narracao ADD COLUMN IF NOT EXISTS ciclo_deadline TIMESTAMPTZ;")
+        await conn.execute("ALTER TABLE sessoes_narracao ADD COLUMN IF NOT EXISTS campanha_local TEXT;")
+        await conn.execute("""CREATE TABLE IF NOT EXISTS progresso_campanha (
+            user_id BIGINT NOT NULL REFERENCES fichas(user_id) ON DELETE CASCADE,
+            localizacao TEXT NOT NULL, npc_nome TEXT NOT NULL, rank TEXT,
+            derrotado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY(user_id,localizacao,npc_nome)
+        );""")
         await conn.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS uq_sessao_ativa_canal
             ON sessoes_narracao(channel_id)
@@ -2892,6 +2899,11 @@ async def garantir_organizacoes():
     for n,t in [('Germa 66','Reino/Exército'),('Cipher Pol','Governo Mundial'),('Baroque Works','Organização criminosa'),('Cross Guild','Organização pirata'),('Shichibukai','Título/Organização'),('Yonkou','Poder marítimo'),('Marinha','Governo Mundial'),('Exército Revolucionário','Revolucionária')]:
         await get_pool().execute("INSERT INTO organizacoes(nome,tipo) VALUES($1,$2) ON CONFLICT(nome) DO NOTHING",n,t)
 async def entrar_organizacao(oid,uid,cargo='Membro'): return await get_pool().execute("INSERT INTO membros_organizacao(organizacao_id,user_id,cargo) VALUES($1,$2,$3) ON CONFLICT(user_id) DO NOTHING",oid,uid,cargo)
+async def definir_organizacao_admin(oid,uid,cargo='Membro'):
+    async with get_pool().acquire() as c:
+        async with c.transaction():
+            await c.execute('DELETE FROM membros_organizacao WHERE user_id=$1',int(uid))
+            return await c.execute('INSERT INTO membros_organizacao(organizacao_id,user_id,cargo) VALUES($1,$2,$3)',int(oid),int(uid),cargo)
 async def organizacao_user(uid): return await get_pool().fetchrow("SELECT o.*,m.cargo FROM organizacoes o JOIN membros_organizacao m ON m.organizacao_id=o.id WHERE m.user_id=$1",uid)
 async def execucao_diaria_feita(chave): return bool(await get_pool().fetchrow("SELECT 1 FROM execucoes_diarias WHERE chave=$1",chave))
 async def marcar_execucao_diaria(chave): return await get_pool().execute("INSERT INTO execucoes_diarias(chave) VALUES($1) ON CONFLICT DO NOTHING",chave)
@@ -3068,3 +3080,16 @@ async def expulsar_faccao(user_id, nova_faccao='Independente'):
 async def buscar_edicao_jornal_24h():
     db=get_pool()
     return await db.fetch("""SELECT * FROM noticias_mundo WHERE publicado=TRUE AND criado_em>=NOW()-INTERVAL '24 hours' ORDER BY criado_em DESC LIMIT 15""")
+
+
+# =========================================================
+# CAMPANHA UNIVERSAL POR LOCALIZAÇÃO
+# =========================================================
+async def listar_progresso_campanha(user_id, localizacao):
+    return await get_pool().fetch("SELECT * FROM progresso_campanha WHERE user_id=$1 AND LOWER(localizacao)=LOWER($2) ORDER BY derrotado_em", int(user_id), str(localizacao))
+
+async def registrar_boss_campanha(user_id, localizacao, npc_nome, rank=None):
+    return await get_pool().fetchrow("""INSERT INTO progresso_campanha(user_id,localizacao,npc_nome,rank) VALUES($1,$2,$3,$4) ON CONFLICT(user_id,localizacao,npc_nome) DO NOTHING RETURNING *""", int(user_id), str(localizacao), str(npc_nome), rank)
+
+async def definir_campanha_sessao(sessao_id, localizacao):
+    return await get_pool().fetchrow("UPDATE sessoes_narracao SET campanha_local=$2 WHERE id=$1 RETURNING *", int(sessao_id), str(localizacao))
