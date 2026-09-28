@@ -92,7 +92,8 @@ class SeasParadiseBot(commands.Bot):
             "cogs.treinamento",
             "cogs.mundo",
             "cogs.finalizacao",
-            "cogs.progressao"
+            "cogs.progressao",
+            "cogs.servidor"
         ]
 
         for extensao in extensoes:
