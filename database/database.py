@@ -406,6 +406,17 @@ async def criar_tabelas():
         """)
 
         await conn.execute("""
+            CREATE TABLE IF NOT EXISTS locais_mundo (
+                nome TEXT PRIMARY KEY,
+                regiao TEXT NOT NULL,
+                slug TEXT NOT NULL UNIQUE,
+                channel_id BIGINT UNIQUE,
+                ativo BOOLEAN NOT NULL DEFAULT TRUE,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS localizacoes_jogador (
                 user_id BIGINT PRIMARY KEY,
                 localizacao TEXT,
@@ -3130,3 +3141,29 @@ async def salvar_topico_campanha(user_id, hub_channel_id, thread_id):
 
 async def buscar_topico_campanha(user_id, hub_channel_id):
     return await get_pool().fetchrow("SELECT * FROM topicos_campanha WHERE user_id=$1 AND hub_channel_id=$2", int(user_id), int(hub_channel_id))
+
+
+# =========================================================
+# CATÁLOGO AUTORITATIVO DE HUBS DO DISCORD
+# =========================================================
+async def sincronizar_locais_mundo(registros):
+    db=get_pool()
+    async with db.acquire() as conn:
+        async with conn.transaction():
+            for nome,regiao,slug,channel_id in registros:
+                await conn.execute("""
+                    INSERT INTO locais_mundo(nome,regiao,slug,channel_id,ativo,atualizado_em)
+                    VALUES($1,$2,$3,$4,TRUE,CURRENT_TIMESTAMP)
+                    ON CONFLICT(nome) DO UPDATE SET regiao=EXCLUDED.regiao,slug=EXCLUDED.slug,
+                    channel_id=EXCLUDED.channel_id,ativo=TRUE,atualizado_em=CURRENT_TIMESTAMP
+                """,nome,regiao,slug,channel_id)
+
+async def resumo_local_mundo(nome):
+    db=get_pool()
+    local=await db.fetchrow("SELECT * FROM locais_mundo WHERE nome=$1",nome)
+    jogadores=await db.fetch("""SELECT l.user_id,f.nome,f.faccao,l.area,l.estado FROM localizacoes_jogador l LEFT JOIN fichas f ON f.user_id=l.user_id WHERE l.localizacao=$1 ORDER BY f.nome NULLS LAST""",nome)
+    npcs=await db.fetch("SELECT * FROM npcs_mundo WHERE localizacao=$1 ORDER BY nome",nome)
+    return local,jogadores,npcs
+
+async def listar_locais_mundo():
+    return await get_pool().fetch("SELECT * FROM locais_mundo WHERE ativo=TRUE ORDER BY regiao,nome")
