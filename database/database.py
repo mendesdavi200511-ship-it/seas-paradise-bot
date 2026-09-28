@@ -388,6 +388,24 @@ async def criar_tabelas():
         # LOCALIZAÇÃO PERSISTENTE — JOGADORES / ACESSO NPC
         # =================================================
         await conn.execute("""
+            CREATE TABLE IF NOT EXISTS topicos_personagem (
+                user_id BIGINT PRIMARY KEY,
+                thread_id BIGINT NOT NULL UNIQUE,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS topicos_campanha (
+                user_id BIGINT NOT NULL,
+                hub_channel_id BIGINT NOT NULL,
+                thread_id BIGINT NOT NULL UNIQUE,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY(user_id, hub_channel_id)
+            );
+        """)
+
+        await conn.execute("""
             CREATE TABLE IF NOT EXISTS localizacoes_jogador (
                 user_id BIGINT PRIMARY KEY,
                 localizacao TEXT,
@@ -3093,3 +3111,22 @@ async def registrar_boss_campanha(user_id, localizacao, npc_nome, rank=None):
 
 async def definir_campanha_sessao(sessao_id, localizacao):
     return await get_pool().fetchrow("UPDATE sessoes_narracao SET campanha_local=$2 WHERE id=$1 RETURNING *", int(sessao_id), str(localizacao))
+
+
+# =========================================================
+# TÓPICOS PRIVADOS — IDs internos ficam no banco, não no nome
+# =========================================================
+async def salvar_topico_personagem(user_id, thread_id):
+    return await get_pool().fetchrow("""INSERT INTO topicos_personagem(user_id,thread_id,atualizado_em) VALUES($1,$2,NOW()) ON CONFLICT(user_id) DO UPDATE SET thread_id=EXCLUDED.thread_id,atualizado_em=NOW() RETURNING *""", int(user_id), int(thread_id))
+
+async def buscar_topico_personagem(user_id):
+    return await get_pool().fetchrow("SELECT * FROM topicos_personagem WHERE user_id=$1", int(user_id))
+
+async def remover_topico_personagem(user_id):
+    return await get_pool().execute("DELETE FROM topicos_personagem WHERE user_id=$1", int(user_id))
+
+async def salvar_topico_campanha(user_id, hub_channel_id, thread_id):
+    return await get_pool().fetchrow("""INSERT INTO topicos_campanha(user_id,hub_channel_id,thread_id,atualizado_em) VALUES($1,$2,$3,NOW()) ON CONFLICT(user_id,hub_channel_id) DO UPDATE SET thread_id=EXCLUDED.thread_id,atualizado_em=NOW() RETURNING *""", int(user_id), int(hub_channel_id), int(thread_id))
+
+async def buscar_topico_campanha(user_id, hub_channel_id):
+    return await get_pool().fetchrow("SELECT * FROM topicos_campanha WHERE user_id=$1 AND hub_channel_id=$2", int(user_id), int(hub_channel_id))
