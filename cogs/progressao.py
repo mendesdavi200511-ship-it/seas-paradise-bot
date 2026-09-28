@@ -159,6 +159,8 @@ TAREFA:
 13. REGRA DE ECONOMIA DE REAÇÃO: não transforme a reação do Boss numa sequência perfeita de várias ações. Uma esquiva não concede automaticamente agarrão + contra-ataque. Cada etapa precisa caber no mesmo intervalo e ser causalmente possível.
 14. Não favoreça o Boss por ser Boss. Resolva primeiro a tentativa do player; a reação nasce do tempo e espaço que realmente restaram. Se a ação do player criou uma abertura válida, o Boss sofre a consequência.
 15. Não escreva que o Boss "percebe antes" sem explicar qual informação física e qual vantagem concreta permitiram isso. Nunca use conhecimento onisciente da intenção do player.
+16. A DECLARAÇÃO DO PLAYER NÃO ALTERA RETROATIVAMENTE O ESTADO. Frases como "ele estava sem apoio", "seria impossível", "eu estava no chão", "acertei", "matei" ou justificativas do jogador são alegações/tentativas, não fatos, salvo quando já constarem no ESTADO FÍSICO AUTORITATIVO. Compare cada alegação com o estado salvo antes de aceitá-la.
+17. Se a ação contradiz o estado salvo, preserve o estado salvo e resolva apenas a parte fisicamente tentável da ação. Não premie nem puna o jogador por escrever uma conclusão como se já tivesse acontecido.
 
 Responda SOMENTE JSON válido:
 {{
@@ -178,20 +180,20 @@ Responda SOMENTE JSON válido:
     async def _resolver_com_retentativas(self, acao, ficha, esp, boss, stats):
         """Resolve a troca sem transformar falha de API/JSON em turno do jogo."""
         erros=[]
-        for tentativa in range(3):
+        for tentativa in range(4):
             try:
-                if tentativa == 0:
-                    out=await asyncio.wait_for(self._resolver_troca(acao,ficha,esp,boss,stats), timeout=35)
+                if tentativa < 2:
+                    out=await asyncio.wait_for(self._resolver_troca(acao,ficha,esp,boss,stats), timeout=50)
                 else:
-                    out=await asyncio.wait_for(self._fallback_troca(acao,ficha,boss,stats), timeout=35)
+                    out=await asyncio.wait_for(self._fallback_troca(acao,ficha,boss,stats), timeout=50)
                 if out and out.get('narracao') and out.get('novo_estado'):
                     return out
             except Exception as ex:
                 erros.append(f"{type(ex).__name__}: {ex}")
                 print(f"⚠️ Boss tentativa {tentativa+1}/3 falhou: {erros[-1]}")
-            if tentativa < 2:
-                await asyncio.sleep(.6)
-        raise RuntimeError(' | '.join(erros[-3:]) or 'resolução sem conteúdo válido')
+            if tentativa < 3:
+                await asyncio.sleep(.8)
+        raise RuntimeError(' | '.join(erros[-4:]) or 'resolução sem conteúdo válido')
 
     async def _fallback_troca(self, acao, ficha, boss, stats):
         """Segunda tentativa curta: nunca devolve o manual interno ao jogador."""

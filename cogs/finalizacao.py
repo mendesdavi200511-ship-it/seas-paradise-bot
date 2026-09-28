@@ -44,6 +44,62 @@ class PoderesView(discord.ui.View):
                 await liberar_forma(self.uid,f"{a['nome']} — Forma Híbrida",20,20,20,'Forma híbrida da Zoan','50% Akuma')
         await i.response.edit_message(embed=discord.Embed(title='🍈 AKUMA NO MI',description='\n'.join(linhas) or 'Nenhuma Akuma no Mi desbloqueada.'),view=self)
 
+COR_RP=discord.Color.from_rgb(245,190,35)
+def _uid(text):
+    import re
+    m=re.search(r'\d{15,22}',text or '')
+    return int(m.group()) if m else None
+
+class CrewManageModal(discord.ui.Modal):
+    def __init__(self,kind,owner_id,group_id,action):
+        super().__init__(title={'recruit':'Recrutar membro','cargo':'Alterar cargo','remove':'Remover membro'}[action]);self.kind=kind;self.owner_id=owner_id;self.group_id=group_id;self.action=action
+        self.member=discord.ui.TextInput(label='ID ou menção do jogador',placeholder='@Jogador ou 123456789...',max_length=40);self.add_item(self.member)
+        self.role=None
+        if action=='cargo':self.role=discord.ui.TextInput(label='Novo cargo',placeholder='Ex.: Imediato / Oficial / Navegador',max_length=40);self.add_item(self.role)
+    async def on_submit(self,i):
+        uid=_uid(self.member.value)
+        if not uid:return await i.response.send_message('❌ Informe uma menção ou ID válido.',ephemeral=True)
+        if self.kind=='trip':
+            t=await buscar_tripulacao_user(self.owner_id)
+            if not t or t['capitao_user_id']!=self.owner_id or t['id']!=self.group_id:return await i.response.send_message('❌ Apenas o capitão pode administrar esta tripulação.',ephemeral=True)
+            if self.action=='recruit':
+                if await buscar_tripulacao_user(uid):return await i.response.send_message('❌ Esse jogador já pertence a uma tripulação.',ephemeral=True)
+                await entrar_tripulacao(t['id'],uid);msg=f'🏴‍☠️ <@{uid}> foi recrutado para **{t["nome"]}**.'
+            elif self.action=='cargo':await definir_cargo_tripulacao(t['id'],uid,self.role.value);msg=f'🎖️ Cargo de <@{uid}> alterado para **{self.role.value}**.'
+            else:await remover_membro_tripulacao(t['id'],uid);msg=f'📤 <@{uid}> foi removido da tripulação.'
+        else:
+            f=await buscar_frota_user(self.owner_id)
+            if not f or f['comandante_user_id']!=self.owner_id or f['id']!=self.group_id:return await i.response.send_message('❌ Apenas o comandante pode administrar esta frota.',ephemeral=True)
+            alvo=await buscar_ficha(uid)
+            if self.action=='recruit':
+                if not alvo or 'marinha' not in str(alvo['faccao']).casefold():return await i.response.send_message('❌ Só personagens da Marinha podem entrar em uma frota.',ephemeral=True)
+                if await buscar_frota_user(uid):return await i.response.send_message('❌ Esse marinheiro já pertence a uma frota.',ephemeral=True)
+                await recrutar_frota(f['id'],uid);msg=f'⚓ <@{uid}> foi recrutado para **{f["nome"]}**.'
+            elif self.action=='cargo':await definir_cargo_frota(f['id'],uid,self.role.value);msg=f'🎖️ Cargo de <@{uid}> alterado para **{self.role.value}**.'
+            else:await remover_membro_frota(f['id'],uid);msg=f'📤 <@{uid}> foi removido da frota.'
+        await i.response.send_message(msg,ephemeral=True)
+
+class GroupPanel(discord.ui.View):
+    def __init__(self,kind,owner_id,group_id,can_manage):
+        super().__init__(timeout=300);self.kind=kind;self.owner_id=owner_id;self.group_id=group_id
+        if not can_manage:
+            for x in self.children:
+                if getattr(x,'label',None)!='Estado':x.disabled=True
+    async def interaction_check(self,i):
+        if i.user.id!=self.owner_id:await i.response.send_message('❌ Este painel pertence a outro jogador.',ephemeral=True);return False
+        return True
+    @discord.ui.button(label='Estado',emoji='📋',style=discord.ButtonStyle.secondary)
+    async def state(self,i,b):
+        g=await (buscar_tripulacao_user(self.owner_id) if self.kind=='trip' else buscar_frota_user(self.owner_id)); ms=await (listar_membros_tripulacao(g['id']) if self.kind=='trip' else listar_membros_frota(g['id']))
+        txt='\n'.join(f"• <@{m['user_id']}> — **{m['cargo']}**" for m in ms) or 'Nenhum membro.'
+        await i.response.send_message(embed=discord.Embed(title=('🏴‍☠️ ' if self.kind=='trip' else '⚓ ')+g['nome'],description=txt,color=COR_RP),ephemeral=True)
+    @discord.ui.button(label='Recrutar',emoji='➕',style=discord.ButtonStyle.secondary)
+    async def recruit(self,i,b):await i.response.send_modal(CrewManageModal(self.kind,self.owner_id,self.group_id,'recruit'))
+    @discord.ui.button(label='Cargo / Rebaixar',emoji='🎖️',style=discord.ButtonStyle.secondary)
+    async def cargo(self,i,b):await i.response.send_modal(CrewManageModal(self.kind,self.owner_id,self.group_id,'cargo'))
+    @discord.ui.button(label='Remover',emoji='📤',style=discord.ButtonStyle.secondary)
+    async def remove(self,i,b):await i.response.send_modal(CrewManageModal(self.kind,self.owner_id,self.group_id,'remove'))
+
 class Finalizacao(commands.Cog):
     def __init__(self,bot): self.bot=bot; bot.add_check(self.prisao_check); self.relogio.start()
     def cog_unload(self): self.relogio.cancel(); self.bot.remove_check(self.prisao_check)
@@ -83,13 +139,13 @@ class Finalizacao(commands.Cog):
 
     @commands.group(invoke_without_command=True)
     async def tripulacao(self,ctx):
-        """Painel persistente da tripulação."""
         t=await buscar_tripulacao_user(ctx.author.id)
         if not t:
-            return await ctx.send('🏴‍☠️ **TRIPULAÇÕES**\nVocê ainda não pertence a uma.\n`!tripulacao criar <nome>` — criar\n`!tripulacao entrar <nome>` — entrar em uma conhecida')
-        ms=await listar_membros_tripulacao(t['id'])
-        linhas='\n'.join(f"• <@{m['user_id']}> **{m['nome']}** — {m['cargo']}" for m in ms)
-        await ctx.send(f"🏴‍☠️ **{t['nome']}**\n👑 Capitão: <@{t['capitao_user_id']}>\n👥 Membros: **{len(ms)}**\n{linhas}\n\n⚓ Para viajar juntos, o dono do navio usa `!viajar <destino>`, escolhe quantos irão e os demais usam `!embarcar`.")
+            e=discord.Embed(title='🏴‍☠️ Tripulação',description='Você ainda não pertence a uma tripulação.\n\n`!tripulacao criar <nome>` — criar uma\n`!tripulacao entrar <nome>` — entrar em uma existente',color=COR_RP)
+            return await ctx.send(embed=e)
+        ms=await listar_membros_tripulacao(t['id']); cap=t['capitao_user_id']==ctx.author.id
+        e=discord.Embed(title=f"🏴‍☠️ {t['nome']}",description=f"👑 Capitão: <@{t['capitao_user_id']}>\n👥 **{len(ms)} membros**\n\nO capitão controla recrutamento, cargos, rebaixamentos e remoções pelo painel.",color=COR_RP)
+        await ctx.send(embed=e,view=GroupPanel('trip',ctx.author.id,t['id'],cap) if cap else GroupPanel('trip',ctx.author.id,t['id'],False))
 
     @tripulacao.command(name='criar')
     async def trip_criar(self,ctx,*,nome):
@@ -226,5 +282,23 @@ class Finalizacao(commands.Cog):
         for s in await sorteios_abertos():
             try: self.bot.add_view(SorteioView(s['id']))
             except Exception: pass
+
+    @commands.group(invoke_without_command=True,name='frota')
+    async def frota(self,ctx):
+        ficha=await buscar_ficha(ctx.author.id)
+        if not ficha or 'marinha' not in str(ficha['faccao']).casefold():return await ctx.send('❌ O sistema de frotas é exclusivo para personagens da **Marinha**.')
+        f=await buscar_frota_user(ctx.author.id)
+        if not f:
+            return await ctx.send(embed=discord.Embed(title='⚓ Frota da Marinha',description='Você ainda não pertence a uma frota.\n\n`!frota criar <nome>` — criar uma frota',color=COR_RP))
+        ms=await listar_membros_frota(f['id']);cmd=f['comandante_user_id']==ctx.author.id
+        e=discord.Embed(title=f"⚓ {f['nome']}",description=f"🎖️ Comandante: <@{f['comandante_user_id']}>\n👥 **{len(ms)} marinheiros**\n\nO comandante controla recrutamento, cargos, rebaixamentos e remoções pelo painel.",color=COR_RP)
+        await ctx.send(embed=e,view=GroupPanel('fleet',ctx.author.id,f['id'],cmd) if cmd else GroupPanel('fleet',ctx.author.id,f['id'],False))
+
+    @frota.command(name='criar')
+    async def frota_criar(self,ctx,*,nome):
+        ficha=await buscar_ficha(ctx.author.id)
+        if not ficha or 'marinha' not in str(ficha['faccao']).casefold():return await ctx.send('❌ Apenas personagens da Marinha podem criar frotas.')
+        r=await criar_frota_marinha(nome.strip()[:60],ctx.author.id)
+        await ctx.send(f'⚓ Frota **{nome.strip()[:60]}** criada. Você é o Comandante.' if r else '❌ Você já pertence a uma frota ou esse nome já está em uso.')
 
 async def setup(bot): await bot.add_cog(Finalizacao(bot))
